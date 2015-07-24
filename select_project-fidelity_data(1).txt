@@ -1,0 +1,33 @@
+# This text file is for selection of data attributes which include process fidelity sheet
+# attribute: available data attibutes for fact sheet
+# selection_flg: 
+#   0: attributes do not include fact sheet
+#   1: attributes include fact sheet 
+attribute,selection_flg
+element,1
+plan_COA,1
+plan_COF,1
+plan_COQ,1
+plan_AFratio,1
+plan_ADevratio,1
+plan_ATotalratio,1
+plan_DevTotalratio,1
+plan_FTotalratio,1
+actual_COA,1
+actual_COF,1
+actual_COQ,1
+actual_AFratio,1
+actual_ADevratio,1
+actual_ATotalratio,1
+actual_DevTotalratio,1
+actual_FTotalratio,1
+actual_COAratio_size,1
+actual_COFratio_size,1
+actual_COQratio_size,1
+R2_phase_effort,1
+R2_task_effort,1
+R2_wbs_effort,1
+slope_effort_by_phase,1
+count_appraisal,1
+count_appraisal_with_time,1
+count_appraisal_with_defects,1

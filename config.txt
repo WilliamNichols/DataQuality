@@ -1,0 +1,16 @@
+m<-dbDriver("MySQL"); # set up the driver for reading the database
+
+
+MydbName <- "tsppacedb" # database name
+#MydbName <- "pacedb" # database name
+
+MyName <- "wrn" # database user
+MyPass <- "myn55Tartan" # database user password
+
+
+
+
+#OutputFile <- "individual_effort_by-phase.csv" # file name for output
+#PdfFileName<-"phase-timeline.pdf" # file name for output
+#PaperSize<-"a4r" # pdf size
+

@@ -1,0 +1,20 @@
+# This text file is for selection of projects to include in the analysis 
+#
+# Oaxaca
+#
+# these two appear to have no data
+#122
+#123    
+#140
+#141
+#144
+#160
+#224
+#225
+project_key
+122
+141
+144
+160
+224
+225
