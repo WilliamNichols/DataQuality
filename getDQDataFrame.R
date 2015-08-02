@@ -145,8 +145,9 @@ getDQDataFrame <- function(unit_list, DF_list, selection_flgs, currentDirectory,
     time_overlap_info <- subset(tab_time_overlap_info, get(unit_key)==element)
 #
 #
-	#, wrn note, these need to be evaluated by individual
-	# sort by person_key
+	#, wrn note, the pre_time_log_end_date field stores the prior record end time, =Null if first record
+#  records are stored by project, person, start time
+	# sort by person_key is accounted for
 #
 
     if (nrow(time_overlap_info) == 0) {
@@ -306,7 +307,7 @@ getDQDataFrame <- function(unit_list, DF_list, selection_flgs, currentDirectory,
         element                              = element,
         number_of_time_records               = num_time_records,
         benford_score_in_time                = ben_score_time,
-    	trailDigit_score_in_time             = trailDigit_score_time,
+    	  trailDigit_score_in_time             = trailDigit_score_time,
         number_of_interrupt_in_time          = num_interrupt,
         number_of_inaccuracy_records_in_time = length_inaccuracy_time,
         number_of_null_in_time               = num_null_delta,
@@ -323,7 +324,7 @@ getDQDataFrame <- function(unit_list, DF_list, selection_flgs, currentDirectory,
         total_overlap_time                   = total_overlap,
         number_of_defect_records             = num_defect_records,
         benford_score_in_defect              = ben_score_deftime,
-		trailDigit_score_in_defect           = trailDigit_score_deftime,
+	    	trailDigit_score_in_defect           = trailDigit_score_deftime,
         number_of_inaccuracy_records_in_defect = length_inaccuracy_defect,
         number_of_zero_in_deffixtime         = num_zero_deftime,
         number_of_null_in_defect             = num_null_deftime,

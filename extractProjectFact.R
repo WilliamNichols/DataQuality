@@ -36,6 +36,7 @@ str_unit <- paste(unit,collapse=",")
 
 # Get necessary data records from SEMPR
 
+# "project_key"        "project_name"       "parent_project_key" "project_pattern"
 tab_project_info<-dbGetQuery(con, paste("
   SELECT    project.project_key,
             Quote(project_name) AS project_name,
@@ -46,7 +47,7 @@ tab_project_info<-dbGetQuery(con, paste("
   ON        project.project_key = project_layer.project_key
   WHERE     project.project_key IN (", str_unit ,")
                                         ", seq=""))
-
+#"project_key"       "organization_key"  "organization_name"
 tab_organization_info<-dbGetQuery(con, paste("
 SELECT    project_key,
           org_mapping.organization_key,
@@ -57,6 +58,7 @@ ON        organization.organization_key = org_mapping.organization_key
 WHERE     project_key IN (", str_unit, ")
                                              ", seq=""))
 
+#"project_key"  "process_key"  "process_name"
 tab_process_info<-dbGetQuery(con, paste("
 SELECT DISTINCT project_key,
                 phase.process_key,
@@ -70,6 +72,8 @@ WHERE  phase.process_key IS NOT NULL
        AND project_key IN ( ", str_unit," )
                                          ", seq=""))
 
+#
+# "project_key" "team_key"    "team_name"   "person_key" 
 tab_teams_info<-dbGetQuery(con, paste("
 SELECT DISTINCT project_key,
                 data_block.team_key,
@@ -88,13 +92,16 @@ WHERE      project_key IN (", str_unit, ")
 
                                              ", seq=""))
 
+# "start_date"   "start_week"   "end_date"     "end_week"     "actual_weeks" "project_key"
 tab_duration_info<-dbGetQuery(con, paste("
 SELECT Min(time_log_start_date)                          AS start_date,
        Date_format(Min(time_log_start_date), '%Y%u')     AS start_week,
        Max(time_log_end_date)                            AS end_date,
        Date_format(Max(time_log_start_date), '%Y%u')     AS end_week,
        ( Date_format(Max(time_log_start_date), '%Y%u') -
-         Date_format(Min(time_log_start_date), '%Y%u') ) AS actual_weeks,
+         Date_format(Min(time_log_start_date), '%Y%u') ) AS duration_weeks,
+       ( Date_format(Max(time_log_start_date), '%Y%j') -
+         Date_format(Min(time_log_start_date), '%Y%j') ) AS duration_days,
        project_key
 FROM   time_log_fact_hist
        JOIN plan_item_hist
@@ -103,9 +110,12 @@ WHERE  time_log_fact_key != 23000
        AND time_log_fact_hist.row_current_flag = 1
        AND plan_item_hist.row_current_flag     = 1
        AND project_key IN ( ", str_unit," )
-GROUP  BY project_key"
-                                       , seq=""))
+GROUP  BY project_key
+                                      " , seq=""))
 
+#  task data
+# "project_key"      "phase_short_name" "phase_base_key"   "phase_ordinal"    
+# "task_begin_date"  "task_end_date"   "sum_actual_time"  "sum_plan_time"    "phase_type"
 tab_time_info<-dbGetQuery(con, paste("
 SELECT   project_key,
          phase_base.phase_short_name,
@@ -136,6 +146,11 @@ ORDER BY  project_key,
           phase_base.phase_base_key
                                      " , seq=""))
 
+
+# time log data
+#"time_log_fact_key"      "project_key"            "time_log_delta_minutes" "time_log_start_date"   
+#"time_log_end_date"      "start_day"              "end_day"                "phase_base_key"        
+# "phase_short_name"    
 tab_time_log_info<-dbGetQuery(con, paste("
   SELECT time_log_fact_key,
          project_key,
@@ -162,14 +177,26 @@ tab_time_log_info<-dbGetQuery(con, paste("
      AND project_key IN ( ", str_unit," )
                                            " , seq=""))
 
+
+# task information
+#    get up to 4 rows for each task
+#        plan, replan, forecast, actual 
+# from task_date_fact_history, join to plan_item_history
+#
+#
+# "task_date_fact_key"   "project_key"          "task_date_key"        
+# "task_completion_date" "measurement_type_key"
+# "phase_short_name"     "wbs_element_key" "plan_item_key"
+#
 tab_task_completion_info<-dbGetQuery(con, paste("
-SELECT    task_date_fact_key,
-          project_key,
-          task_date_key,
-          Date_format(task_date_key, '%Y-%m-%d') AS task_completion_date,
-          measurement_type_key,
-          phase_base.phase_short_name,
-          wbs_element_key
+SELECT    task_date_fact_key
+         , project_key
+         , task_date_key
+         , Date_format(task_date_key, '%Y-%m-%d') AS task_completion_date
+         , measurement_type_key
+         , phase_base.phase_short_name
+         , plan_item_hist.plan_item_key
+         , wbs_element_key
 FROM       task_date_fact_hist
   LEFT JOIN  plan_item_hist
          ON     task_date_fact_hist.plan_item_key = plan_item_hist.plan_item_key
@@ -181,24 +208,33 @@ FROM       task_date_fact_hist
          ON     phase_mapping.phase_base_key = phase_base.phase_base_key
 WHERE       task_date_fact_hist.row_current_flag = 1
   AND       plan_item_hist.row_current_flag      = 1
-  AND       project_key IN (", str_unit, ")"
-                                              , seq=""))
-
-tab_ev_info<-dbGetQuery(con, paste("
+  AND       project_key IN (", str_unit, ")
+ORDER BY    project_key, wbs_element_key, plan_item_key, measurement_type_key
+                                        " , seq=""))
+                                           
+#  from the task_status_fact_history table, join to plan item, phase, and phase mapping
+#  summarizes plan and actual data for a task
+# "project_key"                   "phase_base_key"                "wbs_element_key"              
+# "phase_short_name"              "phase_type"                    "task_key"                     
+# "task_actual_time_minutes"      "task_plan_time_minutes"        "task_actual_complete_date_key"
+# "defects_found"  
+#
+tab_task_info<-dbGetQuery(con, paste("
 SELECT DISTINCT project_key,
                 phase_base.phase_base_key,
+                wbs_element_key,
+                task_status_fact_hist.plan_item_key, 
+                task_status_fact_hist.task_status_fact_key AS task_key,
                 phase_base.phase_short_name,
                 phase_type,
-                wbs_element_key,
                 task_status_fact_hist.task_actual_time_minutes,
                 task_status_fact_hist.task_plan_time_minutes,
+                task_status_fact_hist.task_actual_start_date_key,
                 task_status_fact_hist.task_actual_complete_date_key,
-                defects_found,
-                task_date_fact_hist.task_date_key as task_plan_key
+                task_status_fact_hist.task_actual_start_date,
+                task_status_fact_hist.task_actual_complete_date,
+                defects_found
 FROM            task_status_fact_hist
-   LEFT JOIN    task_date_fact_hist
-  			  ON    task_date_fact_hist.plan_item_key = task_status_fact_hist.plan_item_key
-         AND    measurement_type_key              = 1
    LEFT JOIN    plan_item_hist
           ON        task_status_fact_hist.plan_item_key = plan_item_hist.plan_item_key
    LEFT JOIN    phase
@@ -208,21 +244,22 @@ FROM            task_status_fact_hist
    LEFT JOIN    phase_base
           ON        phase_mapping.phase_base_key = phase_base.phase_base_key
    LEFT JOIN
-                (
-                  SELECT   Sum(defect_fix_count) AS defects_found,
+                (SELECT   Sum(defect_fix_count) AS defects_found,
                           plan_item_key
                   FROM     defect_log_fact_hist
                   GROUP BY plan_item_key) AS defect_table
            ON    defect_table.plan_item_key = task_status_fact_hist.plan_item_key
 WHERE         task_status_fact_hist.row_current_flag = 1
-  AND         plan_item_hist.row_current_flag       = 1
+  AND         plan_item_hist.row_current_flag        = 1
   AND         project_key IN (", str_unit, ")
                                              " , seq=""))
 
 
-### WRN, this is not right, need to get data only for scheduled work. 
+### WRN, this is not correctly named, 
 ### not very relevant at this time
 ### SPI is not useful after completion
+#
+# project_key, sum_plan_minutes
 tab_bcws_info<-dbGetQuery(con, paste("
   SELECT project_key,
          Sum(s.task_plan_time_minutes) AS sum_plan_minutes
@@ -244,6 +281,10 @@ tab_bcws_info<-dbGetQuery(con, paste("
   GROUP  BY project_key
                                              ", seq=""))
 
+# multiple rows for each project for each combination of measurement_type_key and size_metric_name
+# 
+#"project_key"          "measurement_type_key" "size_metric_name"     "sum_size_am"          "sum_size_added"      
+# "sum_size_base"        "sum_size_deleted"     "sum_size_modified"    "sum_size_reused"      "sum_size_total" 
 tab_size_info<-dbGetQuery(con, paste("
   SELECT project_key,
          measurement_type_key,
@@ -267,12 +308,19 @@ GROUP  BY project_key,
           measurement_type_key,
           size_fact_hist.size_metric_key
                                      ", seq=""))
-
+#
+# defects injected per phase in the project, uses phase_base
+#
+# "project_key"                "sum_defect_fix_count"       "sum_defect_records"         
+#" defect_injected_phase_name" "phase_ordinal"              "phase_type"
+#
 tab_defect_injected_info<-dbGetQuery(con, paste("
-SELECT project_key,
-       Sum(defect_fix_count)       AS sum_defect_fix_count,
-       Count(defect_log_fact_key)  AS sum_defect_records,
-       phase_base.phase_short_name AS defect_injected_phase_name
+SELECT project_key
+      , Sum(defect_fix_count)       AS sum_defect_fix_count
+      , Count(defect_log_fact_key)  AS sum_defect_records
+      , phase_base.phase_short_name AS defect_injected_phase_name
+      , phase_base.phase_ordinal    AS phase_ordinal
+      , phase_type
   FROM         defect_log_fact_hist
      LEFT JOIN plan_item_hist
             ON   defect_log_fact_hist.plan_item_key =  plan_item_hist.plan_item_key
@@ -287,13 +335,19 @@ SELECT project_key,
           AND   project_key IN ( ", str_unit," )
   GROUP  BY project_key,
           phase_base.phase_base_key
+  ORDER BY project_key, phase_ordinal
                                         " , seq=""))
 
+
+# "project_key"               "sum_defect_fix_count"      "sum_defect_records"       
+#"defect_removed_phase_name"  "phase_ordinal"             "phase_type"
 tab_defect_removed_info<-dbGetQuery(con, paste("
-  SELECT project_key,
-         Sum(defect_fix_count)       AS sum_defect_fix_count,
-         Count(defect_log_fact_key)  AS sum_defect_records,
-         phase_base.phase_short_name AS defect_removed_phase_name
+  SELECT project_key
+         , Sum(defect_fix_count)       AS sum_defect_fix_count
+         , Count(defect_log_fact_key)  AS sum_defect_records
+         , phase_base.phase_short_name AS defect_removed_phase_name
+         , phase_base.phase_ordinal    AS phase_ordinal
+         , phase_type
   FROM   defect_log_fact_hist
      LEFT JOIN plan_item_hist
             ON   defect_log_fact_hist.plan_item_key =
@@ -309,13 +363,18 @@ tab_defect_removed_info<-dbGetQuery(con, paste("
            AND  project_key IN ( ", str_unit," )
   GROUP  BY project_key,
           phase_base.phase_base_key
+  ORDER  BY project_key, phase_ordinal
                                             ", seq=""))
 
+#   "project_key"         "phase_base_key"      "phase_short_name"    "phase_ordinal"       
+#   "sum_defect_fix_time"
 tab_defect_fix_time_info<-dbGetQuery(con, paste("
-  SELECT project_key,
-         phase_base.phase_base_key,
-         phase_base.phase_short_name,
-         Sum(defect_fix_time_minutes) AS sum_defect_fix_time
+  SELECT project_key
+         , phase_base.phase_base_key
+         , phase_base.phase_short_name
+         , phase_base.phase_ordinal
+         , phase_type
+         , Sum(defect_fix_time_minutes) AS sum_defect_fix_time
   FROM   defect_log_fact_hist
       LEFT JOIN plan_item_hist
              ON   defect_log_fact_hist.plan_item_key = plan_item_hist.plan_item_key
@@ -330,18 +389,24 @@ tab_defect_fix_time_info<-dbGetQuery(con, paste("
             AND   project_key IN ( ", str_unit," )
   GROUP  BY project_key,
           phase_base.phase_base_key
+  ORDER BY project_key, phase_ordinal
                                       "  , seq=""))
-
-tab_completed_task_time_info<-dbGetQuery(con, paste("
-  SELECT project_key,
-         phase_base.phase_short_name,
-         phase_base.phase_base_key,
-         phase_base.phase_ordinal,
-         min(task_actual_start_date_key) as task_begin_date,
-         max(task_actual_complete_date_key) as task_end_date,
-         sum(task_actual_time_minutes) as sum_actual_time,
-         sum(task_plan_time_minutes) as sum_plan_time,
-         phase_type
+# use the task data
+# This is plan and actual effort by phase
+#"project_key"      "phase_short_name" "phase_base_key"   "phase_ordinal"    "task_begin_date"  "task_end_date"   
+#"sum_actual_time"  "sum_plan_time"    "phase_type"      
+tab_phase_time_info<-dbGetQuery(con, paste("
+  SELECT   project_key
+         , phase_base.phase_base_key
+         , phase_base.phase_short_name
+         , phase_base.phase_ordinal
+         , min(task_actual_start_date_key)    as task_begin_date_key
+         , max(task_actual_complete_date_key) as task_end_date_key
+         , min(task_actual_start_date)        as task_begin_date
+         , max(task_actual_complete_date)     as task_end_date
+         , sum(task_actual_time_minutes)      as sum_actual_time
+         , sum(task_plan_time_minutes)        as sum_plan_time
+         , phase_type
   FROM   task_status_fact_hist
        LEFT JOIN plan_item_hist 
               ON task_status_fact_hist.plan_item_key = plan_item_hist.plan_item_key
@@ -373,15 +438,16 @@ names(selection_flgs) <- c("fact_selection", "fidelity_selection")
 
 # Get data frame for project fact and project process fidelity
 DF_list <- list(
-     tab_project_info,           tab_organization_info,    tab_process_info,           tab_teams_info,
-     tab_duration_info,          tab_time_info,            tab_time_log_info,          tab_ev_info,
-     tab_bcws_info,              tab_size_info,            tab_defect_injected_info,   tab_defect_removed_info,
-     tab_defect_fix_time_info,   tab_task_completion_info, tab_completed_task_time_info)
+     tab_project_info,           tab_organization_info,     tab_process_info,            tab_teams_info,
+     tab_duration_info,          tab_time_info,             tab_time_log_info,           tab_task_info,
+     tab_bcws_info,              tab_size_info,             tab_defect_injected_info,    tab_defect_removed_info,
+     tab_defect_fix_time_info,   tab_task_completion_info,  tab_phase_time_info
+	 )
 names(DF_list) <- c(
-    "tab_project_info",         "tab_organization_info",  "tab_process_info",         "tab_teams_info",
-    "tab_duration_info",        "tab_time_info",          "tab_time_log_info",        "tab_ev_info",
-    "tab_bcws_info",            "tab_size_info",          "tab_defect_injected_info", "tab_defect_removed_info",
-    "tab_defect_fix_time_info", "tab_task_completion_info","tab_completed_task_time_info"
+    "tab_project_info",         "tab_organization_info",   "tab_process_info",          "tab_teams_info",
+    "tab_duration_info",        "tab_time_info",           "tab_time_log_info",         "tab_task_info",
+    "tab_bcws_info",            "tab_size_info",           "tab_defect_injected_info",  "tab_defect_removed_info",
+    "tab_defect_fix_time_info", "tab_task_completion_info","tab_phase_time_info"
 )
 
 source("getFactDataFrame.R")

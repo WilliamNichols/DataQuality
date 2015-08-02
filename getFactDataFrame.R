@@ -6,7 +6,38 @@
 # Updated the formula of defect removal yield by each phase
 # Update: 2015/1/28, Yasutaka Shirai
 # Added the function to extract the parent_project_key
+#
+# arguments: unit            - list of projects or components to process
+#            DF_list         -
+#            selection_flgs  -
+#            currentDirector - folder lcatoin for output files
+#            unit_name [project OR component]
+# returns: no returns
+# inputs:
+# 
+# Outputs: project_fact_sheet
+#          fidelity_fact_sheet
+#
+#
+#  calculates (output controlled by selection_flag)
+#       project_key, team_name, project_name
+#       start_date,  end_date 
+#       team_size      
+#      planAM,                       actualAM   
+#      plan_duration_days,  actual_duration_days,          duration_variance_schedule_days
+#     plan_duration_network_days, actual_duration_network_days,  duration_variance_network_days
+#      plan_duration_weeks ,       actual_duration_weeks      ,   
+#      BAC, BCWP, ACWP
+#      CPI as BCWP/ACWP  cost performance index
+#      CV  as BCWP-ACWP  cost_variance
+#
+#      all_phases,  main_phases, phase_top_and_bottom,
+#      ADINJ_rate_(phase), (A)ctual (D)efect (I)njection rate
+#      ADREM_rate_(phase)  (A)ctual (D)efect (R)emoval rate
+#      ADREM_YIELD_(phase)
 
+#
+# USES:
 source("networkdays.R") # need to specify absolute path
 source("stopdays.R") # need to specify absolute path
 source("calcweeks.R") #need to specify absolute path
@@ -15,6 +46,7 @@ source("calcweeks.R") #need to specify absolute path
 NoData <- "No Data"
 
 getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, unit_name) {
+  SCORE = FALSE
   
   # Exchange second argument into each data frame which is used in this function
   tab_project_info         <- DF_list$tab_project_info
@@ -22,16 +54,17 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
   tab_process_info         <- DF_list$tab_process_info
   tab_teams_info           <- DF_list$tab_teams_info
   tab_duration_info        <- DF_list$tab_duration_info
-  tab_time_info            <- DF_list$tab_time_info
-  tab_completed_task_time_info <- DF_list$tab_completed_task_time_info
   tab_time_log_info        <- DF_list$tab_time_log_info
-  tab_ev_info              <- DF_list$tab_ev_info
+  tab_task_info            <- DF_list$tab_task_info
   tab_bcws_info            <- DF_list$tab_bcws_info   # this one may not be useful (WRN, not actually schedule data)
   tab_size_info            <- DF_list$tab_size_info
   tab_defect_injected_info <- DF_list$tab_defect_injected_info
   tab_defect_removed_info  <- DF_list$tab_defect_removed_info
   tab_defect_fix_time_info <- DF_list$tab_defect_fix_time_info
-  tab_task_completion_info <- DF_list$tab_task_completion_info  # used for launch data and plan duration
+  tab_task_completion_info <- DF_list$tab_task_completion_info  # used for launch data and plan duration (was ev_info)
+  tab_phase_time_info      <- DF_list$tab_phase_time_info
+  tab_time_info            <- DF_list$tab_time_info
+  
   source("default_PlaningParameters.R")
   
   if (unit_name == "component") {
@@ -40,11 +73,11 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
   
   ## Output CSV header which is selected
   # fact sheet CSV header
-  fact_data_att_list <- subset(selection_flgs$fact_selection, selection_flg==1)
-  increment_fact <- 1
+  fact_data_att_list     <- subset(selection_flgs$fact_selection, selection_flg==1)
+  increment_fact         <- 1
   # fidelity sheet CSV header
   fidelity_data_att_list <- subset(selection_flgs$fidelity_selection, selection_flg==1)
-  increment_fidelity <- 1
+  increment_fidelity     <- 1
   
   if (unit_name == "project") {
     file_path_fact <- paste(currentDirectory, "/project_fact_sheet_", Sys.Date(), ".csv", sep="")
@@ -56,8 +89,10 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     unit_key <- "wbs_element_key"
   }
   
-  out_fact <- file(file_path_fact, "w")   
-  
+  #write the header row for the project_fact_sheet
+  #
+  out_fact <- file(file_path_fact, "w")     
+
   for (fact_data_att in fact_data_att_list$attribute) {
     if (increment_fact < length(fact_data_att_list$attribute)) {
       writeLines(paste(fact_data_att), out_fact, sep=",")  
@@ -68,6 +103,9 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     increment_fact <- increment_fact + 1
   }
   
+  #############################################################
+  #write the header row for the process_fidelity_fact_sheet
+  #
   out_fidelity <- file(file_path_fidelity, "w")
   
   for (fidelity_data_att in fidelity_data_att_list$attribute) {
@@ -79,12 +117,24 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     
     increment_fidelity <- increment_fidelity + 1
   }
-  
-  ## Extract data by each unit
-  for (element in unit) {
-  
+  #############################################################
+ 
+  projects_with_time<-sort(unique(tab_time_log_info$project_key))
+#  had looped over unit, but will remove all no-data projects from the fact table
+  # begin main loop over the elements (projects of components)
+  #> begin element loop >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  ## Extract data by each unit (project or component)
+  for (element in projects_with_time) {
     ## Prepare vector for internal variable
     phase_vector <- list()
+    #initialize element values each time through loop
+    duration_variance_schedule_days <- NULL
+    duration_variance_network_days  <- NULL
+    duration_variance_days_worked   <- NULL
+    duration_variance_schedule_percent    <- NULL
+    duration_variance_network_percent     <- NULL
+    duration_variance_days_worked_percent <- NULL
+    
     ## Extract project inormation from project table
     if (nrow(tab_project_info) == 0) {
       if (unit_name == "project") {
@@ -95,7 +145,7 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     } else {
       #project_info <- subset(tab_project_info, project_key==element) 
       project_info <- subset(tab_project_info, get(unit_key)==element)
-
+#WRN*** project_layer here!!!
       if (unit_name == "project") {
         project_name <- project_info$project_name
         parent_project_key <- project_info$parent_project_key
@@ -103,14 +153,16 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
         project_key <- paste(project_info$project_key, collapse=";")
         parent_project_key <- paste(project_info$parent_project_key, collapse=";")
       }
-    }
+    } #end if(nrow)
     
+    ##################################################################  
     ## Extract wbs name information from wbs element table
     if (unit_name == "component") {
       wbs_info <- subset(tab_wbs_info, get(unit_key)==element)
       wbs_element_name <- wbs_info$wbs_element_name
-    }
+    } #end if(unit_name)
     
+
     ## Extract organization information from organization table
     organization_info <- subset(tab_organization_info, get(unit_key)==element)
     
@@ -123,7 +175,10 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     } else {
       organization_key <- NoData
     }
+    ## Extract wbs name information from wbs element table
+    ##################################################################  
     
+    ##################################################################  
     ## Extract team and individuals information
     if (nrow(tab_teams_info) == 0) {
       if (unit_name == "project") {
@@ -151,15 +206,18 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
         }
       }
       if (length(team_info$person_key) == 0) {
-        team_size <- NoData
+        team_size   <- NoData
         individuals <- NoData
       } else {
-        team_size <- length(team_info$person_key)
+        team_size   <- length(team_info$person_key)
         individuals <- paste(team_info$person_key, collapse=":")
       }
-    }
-    
-    ## Extract process information
+    } # end if (nrow(tab_teams_info)
+  ## Extract team and individuals information
+  ##################################################################  
+
+  ##################################################################  
+    ## Extract process information "project_key"  "process_key"  "process_name"
     if (nrow(tab_process_info) == 0) {
       process_name <- NoData
     } else {
@@ -173,131 +231,200 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
         process_name <- process_info$process_name
       }
     }
+  ## Extract process information "project_key"  "process_key"  "process_name"
+  ##################################################################  
   
-    ## Extract project date informatio from time log fact hist table
+  ##################################################################  
+  ## Extract project date information from time log fact hist table
+  # start_date
+  # end_date
+  # start_week
+  # end_week
+  # duration
     if (nrow(tab_duration_info) == 0) {
       start_date_char <- NoData
-      end_date_char <- NoData
+      end_date_char   <- NoData
     } else {  
       #duration_info <- subset(tab_duration_info, project_key==element)
       duration_info <- subset(tab_duration_info, get(unit_key)==element)
       
       if (length(duration_info$start_date) == 0) {
         start_date_char <- NoData
-        start_week <- NoData
+        start_week      <- NoData
       } else {
         start_date_char <- duration_info$start_date
-        start_week <- duration_info$start_week
+        start_week      <- duration_info$start_week
       }
       
       if (length(duration_info$end_date) == 0) {
         end_date_char <- NoData
-        end_week <- NoData
+        end_week      <- NoData
       } else {
         end_date_char <- duration_info$end_date
-        end_week <- duration_info$end_week
+        end_week      <- duration_info$end_week
       }
-    }
-
-    ## Calculate duration
+    } # have duration_info start_date start_week, end_date end_week,  duration_weeks project_key
+  ## Extract project date information from time log fact hist table
+  ##################################################################  
+   
+  ##################################################################  #
+    ## Calculate actual duration from the duration_info
+    #
     if (length(duration_info$start_date) == 0 || length(duration_info$end_date) == 0) {
-      actual_duration <- 0
-      actual_weeks <- NoData
-    } else {
-      start_date_char_vector <- unlist(strsplit(start_date_char, "-"))
-      end_date_char_vector <- unlist(strsplit(end_date_char, "-"))
+      actual_duration_days         <- NoData
+      actual_duration_network_days <- NoData
+      actual_duration_weeks        <- NoData
+
+      start_date_char_vector       <- NoData
+      end_date_char_vector         <- NoData
       
-      start_date_year <- as.numeric(start_date_char_vector[1])
+      start_date_year              <- NoData
+      start_date_month             <- NoData
+      start_day_vector             <- NoData
+      start_date_day               <- NoData
+      
+      end_date_year                <- NoData
+      end_date_month               <- NoData
+      end_day_vector               <- NoData
+      end_date_day                 <- NoData
+      actual_duration_weeks        <- NoData      
+      } else {
+      start_date_char_vector <- unlist(strsplit(start_date_char, "-"))
+      end_date_char_vector   <- unlist(strsplit(end_date_char, "-"))
+      
+      start_date_year  <- as.numeric(start_date_char_vector[1])
       start_date_month <- as.numeric(start_date_char_vector[2])
       start_day_vector <- unlist(strsplit(start_date_char_vector[3], " "))
-      start_date_day <- as.numeric(start_day_vector[1])
+      start_date_day   <- as.numeric(start_day_vector[1])
       
-      end_date_year <- as.numeric(end_date_char_vector[1])
+      end_date_year  <- as.numeric(end_date_char_vector[1])
       end_date_month <- as.numeric(end_date_char_vector[2])
       end_day_vector <- unlist(strsplit(end_date_char_vector[3], " "))
-      end_date_day <- as.numeric(end_day_vector[1])
-      
-      if ((start_date_year >= 2000) && (end_date_year >= 2000)) {
-        if ((start_date_month <= 12) && (end_date_month <= 12)) {
-          if ((start_date_day <= 31) && (end_date_day <= 31)) {
+      end_date_day   <- as.numeric(end_day_vector[1])
+      actual_duration_weeks <- duration_info$duration_weeks      
+      if ((start_date_year     >= 2000)  && (end_date_year  >= 2000)) {
+        if ((start_date_month  <= 12)    && (end_date_month <= 12)) {
+          if ((start_date_day  <= 31)    && (end_date_day   <= 31)) {
             project_start_date <- as.Date(start_date_char)
-            project_end_date <- as.Date(end_date_char)
-            
-            actual_duration <- networkdays(project_start_date, project_end_date)
+            project_end_date   <- as.Date(end_date_char)
+            # is actual duration off by 1
+            actual_duration_network_days  <- networkdays(project_start_date, project_end_date)
+            actual_duration_days          <- length(seq(as.Date(project_start_date), as.Date(project_end_date), by="day"))
           }
         }
       }
-      actual_weeks <- duration_info$actual_weeks
+
     }
-    
-    ## Calculate stop days
-    #time_log_info <- subset(tab_time_log_info, project_key==element)
+  ## Calculate duration from the duration_info
+  ##################################################################  #
+  
+
+    ## Calculate stop days by removing weekend
+    #  number of unique calendar days with work applied:  from the time log extract all log dates, unique sort the dates, 
+    #
     time_log_info <- subset(tab_time_log_info, get(unit_key)==element)
+    days_worked   <-unique(as.Date(time_log_info$time_log_start_date))  # vector of unique work days
+    number_unique_days_worked <- length(days_worked)
     
     if (length(time_log_info$time_log_start_date) == 0 || length(time_log_info$time_log_end_date) == 0) {
       stop_days <- 0
     } else {
-      date_df <- data.frame(start_day=time_log_info$start_day, end_day=time_log_info$end_day)
+      date_df   <- data.frame(start_day=time_log_info$start_day, end_day=time_log_info$end_day)
       stop_days <- stopdays(min(time_log_info$start_day), max(time_log_info$end_day), date_df)
     }
     
-    ## Extract task date information by each unit
-    #task_completion_info <- subset(tab_task_completion_info, project_key==element)
-    task_completion_info <- subset(tab_task_completion_info, get(unit_key)==element)
+    ## select only task plan and actual data information for the unit in scope
+    task_completion_info  <- subset(tab_task_completion_info, get(unit_key)==element)
 
-    work_plan_info <- subset(task_completion_info, measurement_type_key==1 & task_date_key > 19900000 & task_date_key < 29991231)
-    # Extract task effort data from task status fact hist table by each phase and unit
-    #time_info <- subset(tab_time_info, project_key==element)
-    time_info <- subset(tab_time_info, get(unit_key)==element)
+  # separate the actual and plan task completion data using the measurement key 1==plan, 4==actual
+  #??# what is task_date_key? is is set for planned but not executed tasks
+    task_plan_completion_info   <- subset(task_completion_info, measurement_type_key==1 & task_date_key > 19900000 & task_date_key < 29991231)
+    task_actual_completion_info <- subset(task_completion_info, measurement_type_key==4 & task_date_key > 19900000 & task_date_key < 29991231)  
 
-    # Extract plan and actual time info with completed task
-    completed_task_time_info <- subset(tab_completed_task_time_info, get(unit_key)==element)
+  # subset task effort, start, and end date from task status fact hist table by each phase and unit
+  # wrn *remove* these should be the same now
+    time_info       <- subset(tab_time_info, get(unit_key)==element)
+    phase_time_info <- subset(tab_phase_time_info, get(unit_key)==element)
 
-    # Extract plan duration
-    #plan_start_date <- as.Date(min(work_plan_info$task_completion_date), format="%Y%m%d")
-    #plan_end_date <- as.Date(max(work_plan_info$task_completion_date), format="%Y%m%d")
+    # Extract plan duration, these do not work *REMOVE*
+#    plan_start_date <- min(as.Date(task_plan_completion_info$task_completion_date), format="%Y%m%d")
+ #   plan_end_date   <- min(as.Date(task_plan_completion_info$task_completion_date), format="%Y%m%d")
 
-    if (length(work_plan_info$task_completion_date) == 0) {
-      plan_duration <- 0
-    } else {
-      task_completion_date <- work_plan_info$task_completion_date[!is.na(work_plan_info$task_completion_date)]
-      plan_duration        <- networkdays(min(task_completion_date), max(task_completion_date))
-      #plan_duration <- networkdays(min(work_plan_info$task_completion_date), max(work_plan_info$task_completion_date))
-    }
 
-    # plan variance of duration
-    duration_variance <- actual_duration - plan_duration
-    
+
+    if (length(task_plan_completion_info$task_completion_date) == 0) {
+      task_completion_date       <- NoData
+      plan_duration_weeks        <- NoData
+      plan_duratoin_network_days <- NoData
+      plan_duration_days         <- NoData
+      duration_variance_schedule_days <- NoData
+      duration_variance_network_days  <- NoData
+      duration_variance_days_worked   <- NoData
+      duration_variance_schedule_percent    <- NoData
+      duration_variance_network_percent     <- NoData
+      duration_variance_days_worked_percent <- NoData
+} else {
+      task_completion_date      <- task_plan_completion_info$task_completion_date[!is.na(task_plan_completion_info$task_completion_date)]
+      plan_start_date              <- min(task_completion_date)
+      plan_end_date                <- max(task_completion_date)
+      plan_duration_network_days   <- networkdays(min(task_completion_date), max(task_completion_date))
+      plan_duration_days           <- length(seq(as.Date(plan_start_date), as.Date(plan_end_date), by="day"))
+    # plan variance for schedule duration
+#    compute for nominal calendar, network days, and worked days (presume days planned but not actually worked)
+      duration_variance_schedule_days <- actual_duration_days         - plan_duration_days
+      duration_variance_network_days  <- actual_duration_network_days - plan_duration_network_days
+      duration_variance_days_worked   <- number_unique_days_worked    - plan_duration_network_days
+    #   now calculate the variance as a %    
     # % variance of duration
-    duration_variance_percent <- (duration_variance/plan_duration)*100.
-    
+      duration_variance_schedule_percent    <- (duration_variance_schedule_days/plan_duration_days)*100.
+      duration_variance_network_percent     <- (duration_variance_network_days/plan_duration_network_days)*100.
+      duration_variance_days_worked_percent <- (duration_variance_days_worked/plan_duration_network_days)*100.
+}
+
+##begin ev ############################################################################################    
+## WRN: it is good to compute plan work complete, I am not sure what we have in these calculations
     ## Extract earned value from ev schedule period fact hist table
     # Calculate BAC, BCWP, and ACWP
-    if (length(tab_ev_info) == 0) {
-      BAC  <- NoData
-      BCWP <- NoData
-      ACWP <- NoData
+# it is not obvious yet how the data was stored.
+# tb_task_info includes all task information
+# 
+    if (length(tab_task_info) == 0) {
+      BAC  <- NaN
+      BCWP <- NaN
+      ACWP <- NaN
     } else {
-      #ev_info                <- subset(tab_ev_info,      project_key==element)   
-      ev_info                 <- subset(tab_ev_info,      get(unit_key)==element)    # all tasks,
-#      ev_plan_info            <- subset(ev_info,          measurement_type_key==1)  # 
-      ev_complete_info        <- subset(ev_info,          task_actual_complete_date_key < 99990000)  # is this the best way to sepaRate
-###      ev_plan_complete_info   <- subset(ev_complete_info, measurement_type_key==1)
-###      ev_actual_complete_info <- subset(ev_complete_info, measurement_type_key==4)
-  
-      ev_actual_complete_info <- ev_complete_info
+      #task_info                <- subset(tab_task_info,      project_key==element)   
+      #   subset all tasks this unit, then
+      #     subset completed tasks 
+      task_info             <- subset(tab_task_info,        get(unit_key)==element)    # all tasks for project
+      task_is_complete_info <- subset(task_info,  task_actual_complete_date_key < 99990000)  # is this the best way to sepaRate
 
-      
-      BAC  <- sum(ev_info$task_plan_time_minutes, na.rm=TRUE)/60
-      BCWP <- sum(ev_complete_info$task_plan_time_minutes, na.rm=TRUE)/60
-      ACWP <- sum(ev_complete_info$task_actual_time_minutes, na.rm=TRUE)/60
+# get plan and actual effort, all planned tasks, in hours 
+      BAC  <- sum(task_info$task_plan_time_minutes,          na.rm=TRUE)/60  # budget at complete
+      BCWP <- sum(task_is_complete_info$task_plan_time_minutes,   na.rm=TRUE)/60  # budgeted cost of work performed
+      ACWP <- sum(task_is_complete_info$task_actual_time_minutes, na.rm=TRUE)/60  # actual   cost of work performed
     }
-    
-    # Calculate BCWS
+  # Calculate CPI and CV
+  if (BCWP == NoData || ACWP == NoData) {
+      CPI <- NoData
+      CV  <- NoData
+      effort_variance         <- NoData
+      effort_variance_percent <- NoData
+  } else {
+      CPI <- BCWP/ACWP
+      CV  <- BCWP-ACWP
+      effort_variance          <- BCWP-ACWP
+      effort_variance_percent  <- (effort_variance/BCWP)*100.
+  }
+# Calculate effort variance  # cost variance does not appear anywhere elase
+  
+##################################
+#>> SPI calculation
+# Calculate BCWS
     if (length(tab_bcws_info) == 0) {
     } else {
       #bcws_info <- subset(tab_bcws_info, project_key==element)
-      bcws_info <- subset(tab_bcws_info, get(unit_key)==element)
+      bcws_info  <- subset(tab_bcws_info, get(unit_key)==element)
       
       if (length(bcws_info$sum_plan_minutes) == 0) {
         BCWS <- NoData
@@ -305,16 +432,7 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
         BCWS <- bcws_info$sum_plan_minutes/60
       }
     }
-  
-    # Calculate CPI and CV
-    if (BCWP == NoData || ACWP == NoData) {
-      CPI <- NoData
-      CV <- NoData
-    } else {
-      CPI <- BCWP/ACWP
-      CV <- BCWP-ACWP
-    }
-    
+ 
     # Calculate SPI and SV  ### WRN, this is not correct becasue BCWS is wrong
     if (BCWP == NoData || BCWS == NoData) {
       SPI <- NoData
@@ -330,20 +448,22 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     CumPV <- BAC
     CumEV <- BCWP
     Final_EV <- NoData
-    
-    # Calculate effort variance  # cost variance does not appear anywhere elase
-    effort_variance          <- BCWP-ACWP
-    effort_variance_percent  <- (effort_variance/BCWP)*100.
-  
+#<< SPI calculation
+##################################
+
+##end ev ############################################################################################  
     ## task hours estimation
-    #### wrn, this is the task estimion, not resource!
+    #### wrn, this is the task estimation, not resource!
   
     baseline_task_hours                   <- NoData
-    project_completed_parts_plan_hours    <- sum(completed_task_time_info$sum_plan_time, na.rm=TRUE)/60
-    project_completed_parts_actual_hours  <- sum(completed_task_time_info$sum_actual_time, na.rm=TRUE)/60
+    project_completed_parts_plan_hours    <- sum(phase_time_info$sum_plan_time, na.rm=TRUE)/60
+    project_completed_parts_actual_hours  <- sum(phase_time_info$sum_actual_time, na.rm=TRUE)/60
     growth_in_task_hours_baseline_to_plan <- NoData
   
-    plan_date_set <- subset(ev_info, task_plan_key < 99999000)   #wrn, removed "_plan" because the selectino did not work, instead each record has a plan component
+ #   plan_date_set <- subset(task_info, task_plan_key < 99999000)   #wrn, removed "_plan" because the selectino did not work, instead each record has a plan component
+   # origional used task_date_key
+   # instead select based on plan time >0
+    plan_date_set <- subset(task_info, task_plan_time_minutes > 0) 
 
     if (length(plan_date_set$task_plan_key) == 0) {
       plan_date <- NoData
@@ -362,17 +482,17 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     ## Calculate plan task hours and actual task hours by using time_info
     actual_task_hours <- sum(time_info$sum_actual_time, na.rm=TRUE)/60
     plan_task_hours   <- sum(time_info$sum_plan_time, na.rm=TRUE)/60
-    if (actual_weeks == NoData || team_size == NoData) {
+    if (actual_duration_weeks == NoData || team_size == NoData) {
       mean_team_task_hours_week <- NoData
       mean_team_member_task_hours_week <- NoData
     } else {
-      mean_team_task_hours_week <- actual_task_hours/actual_weeks
-      mean_team_member_task_hours_week <- actual_task_hours/(actual_weeks*team_size)
+      mean_team_task_hours_week <- actual_task_hours/actual_duration_weeks
+      mean_team_member_task_hours_week <- actual_task_hours/(actual_duration_weeks*team_size)
     }
     
     ## Extract plan size and actual size infomation from size fact hist table 
-    #plan_size_info <- subset(tab_size_info, project_key==element & measurement_type_key=="1" & size_metric_name=="Lines of Code")
-    #actual_size_info <- subset(tab_size_info, project_key==element & measurement_type_key=="4" & size_metric_name=="Lines of Code")
+    #plan_size_info <- subset(tab_size_info,   project_key==element  & measurement_type_key=="1" & size_metric_name=="Lines of Code")
+    #actual_size_info <- subset(tab_size_info, project_key==element  & measurement_type_key=="4" & size_metric_name=="Lines of Code")
     plan_size_info   <- subset(tab_size_info, get(unit_key)==element & measurement_type_key=="1" & size_metric_name=="Lines of Code")
     actual_size_info <- subset(tab_size_info, get(unit_key)==element & measurement_type_key=="4" & size_metric_name=="Lines of Code")
     
@@ -467,93 +587,97 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     ## Extract defect injected and defect removed information from defect log fact hist table  
     # Extract defect injected and defect removed information by each project
     #defect_inj_info <- subset(tab_defect_injected_info, project_key==element)
-    #defect_rem_info <- subset(tab_defect_removed_info, project_key==element)
-    defect_inj_info <- subset(tab_defect_injected_info, get(unit_key)==element)
-    defect_rem_info <- subset(tab_defect_removed_info, get(unit_key)==element)
+    #defect_rem_info <- subset(tab_defect_removed_info,  project_key==element)
+    defect_inj_info  <- subset(tab_defect_injected_info, get(unit_key)==element)
+    defect_rem_info  <- subset(tab_defect_removed_info,  get(unit_key)==element)
     
+####################################################################################
+#>>>>Defects injected and removed
     # Extract defect injected information by each phase 
-
-    adise_set <- subset(defect_inj_info, defect_injected_phase_name=="Sys Eng")
-    adimm_set <- subset(defect_inj_info, defect_injected_phase_name=="Misc")
-    adils_set <- subset(defect_inj_info, defect_injected_phase_name=="StRategy")
-    adiplan_set <- subset(defect_inj_info, defect_injected_phase_name=="Planning")
-    adireq_set <- subset(defect_inj_info, defect_injected_phase_name=="Reqts")
-    adistp_set <- subset(defect_inj_info, defect_injected_phase_name=="Sys Test Plan")
-    adireqr_set <- subset(defect_inj_info, defect_injected_phase_name=="Reqts Review")
+    # WRN, this only works for the TSP framework, will have to replace defect_injected_phase_name with the base phase?
+#   WRN ToDo, if no defects, set NoData and skip this section
+# 
+    adise_set      <- subset(defect_inj_info, defect_injected_phase_name=="Sys Eng")
+    adimm_set      <- subset(defect_inj_info, defect_injected_phase_name=="Misc")
+    adils_set      <- subset(defect_inj_info, defect_injected_phase_name=="StRategy")
+    adiplan_set    <- subset(defect_inj_info, defect_injected_phase_name=="Planning")
+    adireq_set     <- subset(defect_inj_info, defect_injected_phase_name=="Reqts")
+    adistp_set     <- subset(defect_inj_info, defect_injected_phase_name=="Sys Test Plan")
+    adireqr_set    <- subset(defect_inj_info, defect_injected_phase_name=="Reqts Review")
     adireqinsp_set <- subset(defect_inj_info, defect_injected_phase_name=="Reqts Inspect")
-    adihld_set <- subset(defect_inj_info, defect_injected_phase_name=="HLD")
-    adiitp_set <- subset(defect_inj_info, defect_injected_phase_name=="Int Test Plan")
-    adihldr_set <- subset(defect_inj_info, defect_injected_phase_name=="HLD Review")
+    adihld_set     <- subset(defect_inj_info, defect_injected_phase_name=="HLD")
+    adiitp_set     <- subset(defect_inj_info, defect_injected_phase_name=="Int Test Plan")
+    adihldr_set    <- subset(defect_inj_info, defect_injected_phase_name=="HLD Review")
     adihldinsp_set <- subset(defect_inj_info, defect_injected_phase_name=="HLD Inspect")
-    adidld_set <- subset(defect_inj_info, defect_injected_phase_name=="Design")
-    adidldr_set <- subset(defect_inj_info, defect_injected_phase_name=="Design Review")
-    aditd_set <- subset(defect_inj_info, defect_injected_phase_name=="Test Devel")
+    adidld_set     <- subset(defect_inj_info, defect_injected_phase_name=="Design")
+    adidldr_set    <- subset(defect_inj_info, defect_injected_phase_name=="Design Review")
+    aditd_set      <- subset(defect_inj_info, defect_injected_phase_name=="Test Devel")
     adidldinsp_set <- subset(defect_inj_info, defect_injected_phase_name=="Design Inspect")
-    adicode_set <- subset(defect_inj_info, defect_injected_phase_name=="Code")
-    adicr_set <- subset(defect_inj_info, defect_injected_phase_name=="Code Review")
+    adicode_set    <- subset(defect_inj_info, defect_injected_phase_name=="Code")
+    adicr_set      <- subset(defect_inj_info, defect_injected_phase_name=="Code Review")
     adicompile_set <- subset(defect_inj_info, defect_injected_phase_name=="Compile")
-    adiinsp_set <- subset(defect_inj_info, defect_injected_phase_name=="Code Inspect")
-    adiut_set <- subset(defect_inj_info, defect_injected_phase_name=="Test")
-    adibit_set <- subset(defect_inj_info, defect_injected_phase_name=="Int Test")
-    adist_set <- subset(defect_inj_info, defect_injected_phase_name=="Sys Test")
-    adiat_set <- subset(defect_inj_info, defect_injected_phase_name=="Accept Test")
-    adipl_set <- subset(defect_inj_info, defect_injected_phase_name=="Product Life")
-    adideploy_set <- subset(defect_inj_info, defect_injected_phase_name=="Deployment")
+    adiinsp_set    <- subset(defect_inj_info, defect_injected_phase_name=="Code Inspect")
+    adiut_set      <- subset(defect_inj_info, defect_injected_phase_name=="Test")
+    adibit_set     <- subset(defect_inj_info, defect_injected_phase_name=="Int Test")
+    adist_set      <- subset(defect_inj_info, defect_injected_phase_name=="Sys Test")
+    adiat_set      <- subset(defect_inj_info, defect_injected_phase_name=="Accept Test")
+    adipl_set      <- subset(defect_inj_info, defect_injected_phase_name=="Product Life")
+    adideploy_set  <- subset(defect_inj_info, defect_injected_phase_name=="Deployment")
     
     # Extract defect removed information by each phase
-    adrse_set <- subset(defect_rem_info, defect_removed_phase_name=="Sys Eng")
-    adrmm_set <- subset(defect_rem_info, defect_removed_phase_name=="Misc")
-    adrls_set <- subset(defect_rem_info, defect_removed_phase_name=="StRategy")
-    adrplan_set <- subset(defect_rem_info, defect_removed_phase_name=="Planning")
-    adrreq_set <- subset(defect_rem_info, defect_removed_phase_name=="Reqts")
-    adrstp_set <- subset(defect_rem_info, defect_removed_phase_name=="Sys Test Plan")
-    adrreqr_set <- subset(defect_rem_info, defect_removed_phase_name=="Reqts Review")
+    adrse_set      <- subset(defect_rem_info, defect_removed_phase_name=="Sys Eng")
+    adrmm_set      <- subset(defect_rem_info, defect_removed_phase_name=="Misc")
+    adrls_set      <- subset(defect_rem_info, defect_removed_phase_name=="StRategy")
+    adrplan_set    <- subset(defect_rem_info, defect_removed_phase_name=="Planning")
+    adrreq_set     <- subset(defect_rem_info, defect_removed_phase_name=="Reqts")
+    adrstp_set     <- subset(defect_rem_info, defect_removed_phase_name=="Sys Test Plan")
+    adrreqr_set    <- subset(defect_rem_info, defect_removed_phase_name=="Reqts Review")
     adrreqinsp_set <- subset(defect_rem_info, defect_removed_phase_name=="Reqts Inspect")
-    adrhld_set <- subset(defect_rem_info, defect_removed_phase_name=="HLD")
-    adritp_set <- subset(defect_rem_info, defect_removed_phase_name=="Int Test Plan")
-    adrhldr_set <- subset(defect_rem_info, defect_removed_phase_name=="HLD Review")
+    adrhld_set     <- subset(defect_rem_info, defect_removed_phase_name=="HLD")
+    adritp_set     <- subset(defect_rem_info, defect_removed_phase_name=="Int Test Plan")
+    adrhldr_set    <- subset(defect_rem_info, defect_removed_phase_name=="HLD Review")
     adrhldinsp_set <- subset(defect_rem_info, defect_removed_phase_name=="HLD Inspect")
-    adrdld_set <- subset(defect_rem_info, defect_removed_phase_name=="Design")
-    adrdldr_set <- subset(defect_rem_info, defect_removed_phase_name=="Design Review")
-    adrtd_set <- subset(defect_rem_info, defect_removed_phase_name=="Test Devel")
+    adrdld_set     <- subset(defect_rem_info, defect_removed_phase_name=="Design")
+    adrdldr_set    <- subset(defect_rem_info, defect_removed_phase_name=="Design Review")
+    adrtd_set      <- subset(defect_rem_info, defect_removed_phase_name=="Test Devel")
     adrdldinsp_set <- subset(defect_rem_info, defect_removed_phase_name=="Design Inspect")
-    adrcode_set <- subset(defect_rem_info, defect_removed_phase_name=="Code")
-    adrcr_set <- subset(defect_rem_info, defect_removed_phase_name=="Code Review")
+    adrcode_set    <- subset(defect_rem_info, defect_removed_phase_name=="Code")
+    adrcr_set      <- subset(defect_rem_info, defect_removed_phase_name=="Code Review")
     adrcompile_set <- subset(defect_rem_info, defect_removed_phase_name=="Compile")
-    adrinsp_set <- subset(defect_rem_info, defect_removed_phase_name=="Code Inspect")
-    adrut_set <- subset(defect_rem_info, defect_removed_phase_name=="Test")
-    adrbit_set <- subset(defect_rem_info, defect_removed_phase_name=="Int Test")
-    adrst_set <- subset(defect_rem_info, defect_removed_phase_name=="Sys Test")
-    adrat_set <- subset(defect_rem_info, defect_removed_phase_name=="Accept Test")
-    adrpl_set <- subset(defect_rem_info, defect_removed_phase_name=="Product Life")
-    adrdeploy_set <- subset(defect_rem_info, defect_removed_phase_name=="Deployment")
+    adrinsp_set    <- subset(defect_rem_info, defect_removed_phase_name=="Code Inspect")
+    adrut_set      <- subset(defect_rem_info, defect_removed_phase_name=="Test")
+    adrbit_set     <- subset(defect_rem_info, defect_removed_phase_name=="Int Test")
+    adrst_set      <- subset(defect_rem_info, defect_removed_phase_name=="Sys Test")
+    adrat_set      <- subset(defect_rem_info, defect_removed_phase_name=="Accept Test")
+    adrpl_set      <- subset(defect_rem_info, defect_removed_phase_name=="Product Life")
+    adrdeploy_set  <- subset(defect_rem_info, defect_removed_phase_name=="Deployment")
     
     # Extract Plan Defects Injected
-    PDISE <- NoData
-    PDIMM <- NoData
-    PDILS <- NoData
-    PDIPLAN <- NoData
-    PDIREQ <- NoData
-    PDISTP <- NoData
+    PDISE      <- NoData
+    PDIMM      <- NoData
+    PDILS      <- NoData
+    PDIPLAN    <- NoData
+    PDIREQ     <- NoData
+    PDISTP     <- NoData
     PDIREQINSP <- NoData
-    PDIHLD <- NoData
-    PDIITP <- NoData
+    PDIHLD     <- NoData
+    PDIITP     <- NoData
     PDIHLDINSP <- NoData
-    PDIDLD <- NoData
-    PDIDLDR <- NoData
-    PDITD <- NoData
+    PDIDLD     <- NoData
+    PDIDLDR    <- NoData
+    PDITD      <- NoData
     PDIDLDINSP <- NoData
-    PDICODE <- NoData
-    PDICR <- NoData
+    PDICODE    <- NoData
+    PDICR      <- NoData
     PDICOMPILE <- NoData
-    PDIINSP <- NoData
-    PDIUT <- NoData
-    PDIBIT <- NoData
-    PDIST <- NoData
-    PDIAT <- NoData
-    PDIPL <- NoData
-    PDIDEPLOY <- NoData
-    PDITOTAL <- NoData
+    PDIINSP    <- NoData
+    PDIUT      <- NoData
+    PDIBIT     <- NoData
+    PDIST      <- NoData
+    PDIAT      <- NoData
+    PDIPL      <- NoData
+    PDIDEPLOY  <- NoData
+    PDITOTAL   <- NoData
   
     # Extract Actual Defect Injected
     if (length(adise_set$sum_defect_fix_count) == 0 || is.na(adise_set$sum_defect_fix_count)) {
@@ -902,44 +1026,48 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
   
     # Extract defect find and fix time in each phase
     #defect_fix_time_info <- subset(tab_defect_fix_time_info, project_key==element)
-    defect_fix_time_info <- subset(tab_defect_fix_time_info, get(unit_key)==element)
-    deft_ut_set <- subset(defect_fix_time_info, phase_short_name=="Test")
-    project_key <- element
+    defect_fix_time_info  <- subset(tab_defect_fix_time_info, get(unit_key)==element)
+    deft_ut_set           <- subset(defect_fix_time_info, phase_short_name=="Test")
+    project_key           <- element
+
     
     if (length(deft_ut_set$sum_defect_fix_time) == 0 || is.na(deft_ut_set$sum_defect_fix_time)) {
       DEFFIXTUT <- 0
     } else {
       DEFFIXTUT <- deft_ut_set$sum_defect_fix_time/60
     }
-  
+#
+#<<<<<Defects injected and removed
+####################################################################################
+
     # Extract time in phase information from task status fact hist table by each phase 
-    tse_set <- subset(time_info, phase_short_name=="Sys Eng")
-    tmm_set <- subset(time_info, phase_short_name=="Misc")
-    tls_set <- subset(time_info, phase_short_name=="StRategy")
-    tplan_set <- subset(time_info, phase_short_name=="Planning")
-    treq_set <- subset(time_info, phase_short_name=="Reqts")
-    tstp_set <- subset(time_info, phase_short_name=="Sys Test Plan")
+    tse_set      <- subset(time_info, phase_short_name=="Sys Eng")
+    tmm_set      <- subset(time_info, phase_short_name=="Misc")
+    tls_set      <- subset(time_info, phase_short_name=="StRategy")
+    tplan_set    <- subset(time_info, phase_short_name=="Planning")
+    treq_set     <- subset(time_info, phase_short_name=="Reqts")
+    tstp_set     <- subset(time_info, phase_short_name=="Sys Test Plan")
     treqinsp_set <- subset(time_info, phase_short_name=="Reqts Inspect")
-    thld_set <- subset(time_info, phase_short_name=="HLD")
-    titp_set <- subset(time_info, phase_short_name=="Int Test Plan")
+    thld_set     <- subset(time_info, phase_short_name=="HLD")
+    titp_set     <- subset(time_info, phase_short_name=="Int Test Plan")
     thldinsp_set <- subset(time_info, phase_short_name=="HLD Inspect")
-    tdld_set <- subset(time_info, phase_short_name=="Design")
-    tdldr_set <- subset(time_info, phase_short_name=="Design Review")
-    ttd_set <- subset(time_info, phase_short_name=="Test Devel")
+    tdld_set     <- subset(time_info, phase_short_name=="Design")
+    tdldr_set    <- subset(time_info, phase_short_name=="Design Review")
+    ttd_set      <- subset(time_info, phase_short_name=="Test Devel")
     tdldinsp_set <- subset(time_info, phase_short_name=="Design Inspect")
-    tcode_set <- subset(time_info, phase_short_name=="Code")
-    tcr_set <- subset(time_info, phase_short_name=="Code Review")
+    tcode_set    <- subset(time_info, phase_short_name=="Code")
+    tcr_set      <- subset(time_info, phase_short_name=="Code Review")
     tcompile_set <- subset(time_info, phase_short_name=="Compile")
-    tinsp_set <- subset(time_info, phase_short_name=="Code Inspect")
-    tut_set <- subset(time_info, phase_short_name=="Test")
-    tbit_set <- subset(time_info, phase_short_name=="Int Test")
-    tst_set <- subset(time_info, phase_short_name=="Sys Test")
-    tdoc_set <- subset(time_info, phase_short_name=="Documentation")
-    tpm_set <- subset(time_info, phase_short_name=="Postmortem")
-    tat_set <- subset(time_info, phase_short_name=="Accept Test")
-    tpl_set <- subset(time_info, phase_short_name=="Product Life")
-    tdeploy_set <- subset(time_info, phase_short_name=="Deployment")
-    total_plan_minutes <- sum(time_info$sum_plan_time, na.rm=TRUE)
+    tinsp_set    <- subset(time_info, phase_short_name=="Code Inspect")
+    tut_set      <- subset(time_info, phase_short_name=="Test")
+    tbit_set     <- subset(time_info, phase_short_name=="Int Test")
+    tst_set      <- subset(time_info, phase_short_name=="Sys Test")
+    tdoc_set     <- subset(time_info, phase_short_name=="Documentation")
+    tpm_set      <- subset(time_info, phase_short_name=="Postmortem")
+    tat_set      <- subset(time_info, phase_short_name=="Accept Test")
+    tpl_set      <- subset(time_info, phase_short_name=="Product Life")
+    tdeploy_set  <- subset(time_info, phase_short_name=="Deployment")
+    total_plan_minutes   <- sum(time_info$sum_plan_time, na.rm=TRUE)
     total_actual_minutes <- sum(time_info$sum_actual_time, na.rm=TRUE)
   
     # Extract Launch date information
@@ -958,22 +1086,22 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     } else {
       launch_end_date <- min(launch_completion_info$task_date_key)
     }
-  
+    #WRN ToDo
     # Extract work start date plan information
     # Work_start_date_plan is extracted from task_date_fact_hist_table 
   
-    if (length(work_plan_info$task_date_key) == 0) {
+    if (length(task_plan_completion_info$task_date_key) == 0) {
       work_start_date_plan <- NoData
       work_end_date_plan <- NoData
     } else {
-      work_start_date_plan <- min(work_plan_info$task_date_key)
-      work_end_date_plan   <- max(work_plan_info$task_date_key)
+      work_start_date_plan <- min(task_plan_completion_info$task_date_key)
+      work_end_date_plan   <- max(task_plan_completion_info$task_date_key)
     }
   
     # Extract final product delivery date information
     # Final product delivery date information is regarded as end date of testing activity by each unit 
     # Final_product_delivery_plan is extracted from task_date_fact_hist_table Final_product_delivery_actual is extracted from time_log_fact_hist
-    product_delivery_plan_info <- subset(work_plan_info, regexpr("\\Test$", work_plan_info$phase_short_name) != -1)
+    product_delivery_plan_info <- subset(task_plan_completion_info, regexpr("\\Test$", task_plan_completion_info$phase_short_name) != -1)
 
     if (length(product_delivery_plan_info$task_date_key) == 0) {
       final_product_delivery_plan <- NoData
@@ -992,7 +1120,7 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     baseline_date <- NoData
     predicted_date <- NoData
     if (work_start_date_plan == NoData || work_end_date_plan == NoData) {
-      plan_weeks <- NoData
+      plan_duration_weeks <- NoData
     } else {
       start_date_plan_str <- paste(substring(work_start_date_plan,1,4),"-",substring(work_start_date_plan,5,6),"-",substring(work_start_date_plan,7,8),sep="")
       end_date_plan_str <- paste(substring(work_end_date_plan,1,4),"-",substring(work_end_date_plan,5,6),"-",substring(work_end_date_plan,7,8),sep="")
@@ -1000,19 +1128,19 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
       end_week_plan_str <- format(as.Date(end_date_plan_str),"%Y%W")
       #plan_weeks <- format(as.Date(end_date_plan_str),"%Y%W")-format(as.Date(start_date_plan_str), "%Y%W")
       #plan_weeks <- as.Date(end_date_plan_str,"%Y%W")-as.Date(start_date_plan_str,"%Y%W")
-      plan_weeks  <- calcweeks(start_week_plan_str, end_week_plan_str)
+      plan_duration_weeks  <- calcweeks(start_week_plan_str, end_week_plan_str)
     }
     baseline_weeks <- NoData
     growth_schedule_baseline <- NoData
     
     # Extract Planned Time in Phase, Planned Phase Rate, and  Planned Time Percent in Phase
     if (length(tse_set$sum_plan_time) == 0 || is.na(tse_set$sum_plan_time)) {
-      PTSE <- 0
-      PRate_SE <- 0
+      PTSE          <- 0
+      PRate_SE      <- 0
       PT_PERCENT_SE <- 0
     } else {
-      PTSE <- tse_set$sum_plan_time
-      PRate_SE <- planAM/PTSE*60
+      PTSE          <- tse_set$sum_plan_time
+      PRate_SE      <- planAM/PTSE*60
       PT_PERCENT_SE <- PTSE/total_plan_minutes*100
     }
     
@@ -1540,27 +1668,29 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     
     ATTOTAL <- sum(time_info$sum_actual_time, na.rm=TRUE)
     
+
+#WRN ToDo, this relies only on code
     ## Actual Defect Density
     if (actualAM == 0) {
-      DDDLDR <- 0
+      DDDLDR    <- 0
       DDDLDINSP <- 0
-      DDCR <- 0
+      DDCR      <- 0
       DDCOMPILE <- 0
-      DDINSP <- 0
-      DDUT <- 0
-      DDBIT <- 0
-      DDST <- 0
-      DDTOTAL <- 0
+      DDINSP    <- 0
+      DDUT      <- 0
+      DDBIT     <- 0
+      DDST      <- 0
+      DDTOTAL   <- 0
     } else {
-      DDDLDR <- ADRDLDR*1000/actualAM
+      DDDLDR    <- ADRDLDR*1000/actualAM
       DDDLDINSP <- ADRDLDINSP*1000/actualAM
-      DDCR <- ADRCR*1000/actualAM
+      DDCR      <- ADRCR*1000/actualAM
       DDCOMPILE <- ADRCOMPILE*1000/actualAM
-      DDINSP <- ADRINSP*1000/actualAM
-      DDUT <- ADRUT*1000/actualAM
-      DDBIT <- ADRBIT*1000/actualAM
-      DDST <- ADRST*1000/actualAM
-      DDTOTAL <- ADRTOTAL*1000/actualAM
+      DDINSP    <- ADRINSP*1000/actualAM
+      DDUT      <- ADRUT*1000/actualAM
+      DDBIT     <- ADRBIT*1000/actualAM
+      DDST      <- ADRST*1000/actualAM
+      DDTOTAL   <- ADRTOTAL*1000/actualAM
     }
     
     ## Plan Defect Injection and Removal Rates
@@ -2193,8 +2323,8 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     Effort_Estimation_Accuracy  <- total_actual_minutes/total_plan_minutes
     
     ## Calculate COA,COF,and COQ
-    COA_set <- subset(time_info, phase_type=="Appraisal")
-    COF_set <- subset(time_info, phase_type=="Failure")
+    COA_set          <- subset(time_info, phase_type=="Appraisal")
+    COF_set          <- subset(time_info, phase_type=="Failure")
     construction_set <- subset(time_info, phase_type=="Construction")
     
     # Plan COA, COF, and COQ
@@ -2230,7 +2360,7 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     actual_ATotalratio   <- actual_COA/total_actual_effort
     actual_CTotalratio   <- actual_construction_effort/total_actual_effort
     actual_FTotalratio   <- actual_COF/total_actual_effort
-    actual_ACration      <- actual_COA/actual_construction_effort  # this is same as ADevratio
+    actual_ACratio       <- actual_COA/actual_construction_effort  # this is same as ADevratio
     
     # COA,COF, and COQ within DLD through UT
     COAinDLDUT_set <- subset(time_info, phase_short_name=="Design Review" | phase_short_name=="Design Inspect" | phase_short_name=="Code Review" | phase_short_name=="Code Inspect")
@@ -2257,59 +2387,35 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     actual_SizetoCodeApp  <- actualAM*60/(ATCR+ATINSP)
     
     # Production Rate  
-    production_rate_const <- actualAM/actual_construction_effort
+    actual_production_rate_const   <- actualAM/actual_construction_effort
     plan_production_rate_total     <-   planAM/total_plan_effort
     actual_production_rate_total   <- actualAM/total_actual_effort
-  
-    ## Calculate correlation and parameters of regression line
-    if (length(ev_actual_complete_info$phase_short_name[!is.na(ev_actual_complete_info$phase_short_name)]) == 0 || length(ev_actual_complete_info$task_plan_time_minutes) == 0 || length(ev_actual_complete_info$task_actual_time_minutes) == 0) {
-      R2_phase_effort       <- NoData
-      slope_effort_by_phase <- NoData
-    } else {
-      # aggregated phase effort correlation by each unit
-      dataset_effort_by_phase <- aggregate(list(sum_plan_time=ev_actual_complete_info$task_plan_time_minutes, sum_actual_time=ev_actual_complete_info$task_actual_time_minutes), by=list(phase_short_name=ev_actual_complete_info$phase_short_name), FUN=sum, na.rm=TRUE)
-      R2_phase_effort <- cor(dataset_effort_by_phase$sum_plan_time[!is.na(dataset_effort_by_phase$sum_plan_time)], dataset_effort_by_phase$sum_actual_time[!is.na(dataset_effort_by_phase$sum_actual_time)])
-
-      # regression line for aggregated phase effort
-      if (length(unique(dataset_effort_by_phase$sum_plan_time)) > 1 && length(unique(dataset_effort_by_phase$sum_actual_time)) > 1) {
-        regression_effort_by_phase <- lm(sum_actual_time~sum_plan_time, data=dataset_effort_by_phase)
-        slope_effort_by_phase <- summary(regression_effort_by_phase)$coefficients["sum_plan_time","Estimate"]
-      } else {
-        slope_effort_by_phase <- NoData
-      }
-    }
-    
-    # task effort correlation by each unit
-    
-    if (length(ev_actual_complete_info$task_plan_time_minutes) == 0 || length(ev_actual_complete_info$task_actual_time_minutes) == 0) {
-      R2_task_effort <- NoData
-    } else {
-#      R2_task_effort <- cor(ev_actual_complete_info$task_plan_time_minutes, ev_actual_complete_info$task_actual_time_minutes)
-      R2_task_effort <- cor(ev_actual_complete_info$task_plan_time_minutes, ev_actual_complete_info$task_actual_time_minutes)
-      regress_task_effort <- lm(task_plan_time_minutes~task_actual_time_minutes,data=ev_actual_complete_info)
-      slope_task_effort   <- summary(regress_task_effort)$coefficients["task_actual_time_minutes", "Estimate"]
-    }
-
-    # aggregated wbs element effort correlation by project
-    
-    if (length(ev_actual_complete_info$wbs_element_key) == 0) {
-      R2_wbs_effort <- NoData
-    } else {
-      dataset_effort_by_wbs <- aggregate(list(sum_plan_time=ev_actual_complete_info$task_plan_time_minutes, sum_actual_time=ev_actual_complete_info$task_actual_time_minutes), by=list(wbs_element_key=ev_actual_complete_info$wbs_element_key), FUN=sum, na.rm=TRUE)
-      R2_wbs_effort <- cor(dataset_effort_by_wbs$sum_plan_time, dataset_effort_by_wbs$sum_actual_time)
-      regress_wbs_effort <-lm(sum_plan_time~sum_actual_time,data=dataset_effort_by_wbs)
-      slope_wbs_effort   <- summary(regress_wbs_effort)$coefficients["sum_actual_time", "Estimate"]
-    }
+ 
 
     ## Phase performance
     ## performance of appraisal phases
-    dataset_appraisal <- subset(ev_actual_complete_info, phase_type=="Appraisal")
-    dataset_failure   <- subset(ev_actual_complete_info, phase_type=="Failure")
-    
+    dataset_appraisal    <- subset(task_info, phase_type=="Appraisal")
+    dataset_failure      <- subset(task_info, phase_type=="Failure")
+    dataset_overhead     <- subset(task_info, phase_type=="Overhead")
+    dataset_construction <- subset(task_info, phase_type=="Construction")  
+# Count appraisal tasks by each unit
+
+    count_appraisal    <- length(dataset_appraisal$phase_type)
+    count_failure      <- length(dataset_failure$phase_type)
+    count_construction <- length(dataset_construction$phase_type)
+    count_overhead     <- length(dataset_overhead$phase_type)
+
+
+    dataset_complete_appraisal    <- subset(task_is_complete_info, phase_type=="Appraisal")
+    dataset_complete_failure      <- subset(task_is_complete_info, phase_type=="Failure")
+    dataset_comlete_overhead      <- subset(task_is_complete_info, phase_type=="Overhead")
+    dataset_complete_construction <- subset(task_is_complete_info, phase_type=="Construction")  
     # Count appraisal tasks by each unit
     
-    count_appraisal <- length(dataset_appraisal$phase_type)
-    count_failure   <- length(dataset_failure$phase_type)
+    count_complete_appraisal    <- length(dataset_complete_appraisal$phase_type)
+    count_complete_failure      <- length(dataset_complete_failure$phase_type)
+    count_complete_construction <- length(dataset_complete_construction$phase_type)
+    count_complete_overhead     <- length(dataset_complete_construction$phase_type)
     
     # Count appraisal tasks with >0 time
     dataset_appraisal_with_time <- subset(dataset_appraisal, task_actual_time_minutes>0)   
@@ -2329,7 +2435,7 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     actual_appraisal_time             <- sum(dataset_appraisal_with_time$task_actual_time_minutes) ## wrn
     appraisal_defects                 <- sum(dataset_appraisal_with_defects$defects_found)            ## wrn
     failure_defects                   <- sum(dataset_failure_with_defects$defects_found)            ## wrn
-    total_defects                     <- sum(ev_actual_complete_info$defects_found, na.rm = TRUE)
+    total_defects                     <- sum(task_is_complete_info$defects_found, na.rm = TRUE)
     if( actual_appraisal_time >0){
       appraisal_defect_removal_rate <- (appraisal_defects/actual_appraisal_time)*60.
     }else{
@@ -2337,7 +2443,7 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
       }
    
     ## performance of appraisal phases
-    dataset_failure <- subset(ev_actual_complete_info, phase_type=="Failure")
+    dataset_failure <- subset(task_is_complete_info, phase_type=="Failure")
     # Count failure tasks by each unit
     count_failure <- length(dataset_failure$phase_type)
     
@@ -2368,7 +2474,7 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
  
    total_appraisal_defects  <- sum(dataset_appraisal_with_defects$defects_found, na.rm = TRUE)
    total_failure_defects    <- sum(dataset_failure_with_time$defects_found, na.rm = TRUE)
-   total_defects            <- sum(ev_actual_complete_info$defects_found, na.rm = TRUE)
+   total_defects            <- sum(task_is_complete_info$defects_found, na.rm = TRUE)
 
    PCTDREM_appraisal    <- 0.0            
    PCTDREM_failure      <- 0.0
@@ -2397,50 +2503,131 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
    ### hold this, I want to look at planned and actual time in failure phases that find and do not find defects
    ##  are low defect tasks more predictable? 
    ###
-   
-   ###
+
+###
    ### write a csv file with the following parameters
    # score score for (ACR, plan review, review_effective score, phase estimation score, wbs estimation score, )
-   
-   ACRatio_score                 <- min(2*actual_ACration,1.25)
-   PCRatio_score                 <- min(2*plan_ADevratio,1.25)
-   phase_effort_estimation_score <- R2_phase_effort
-   wbs_estimation_score          <- R2_wbs_effort
-   appraisal_effective_score     <- max(1.25,appraisal_defect_removal_rate /2.5)
-   if(is.nan(AM_Size_Estimation_Accuracy)){size_accuracy_score=0 
-    } else {
-        if(AM_Size_Estimation_Accuracy>1){
-          size_accuracy_score = 1/AM_Size_Estimation_Accuracy
+   ACRatio_score                 <- NoData
+   PCRatio_score                 <- NoData
+   phase_effort_estimation_score <- NoData
+   wbs_estimation_score          <- NoData
+   appraisal_effective_score     <- NoData
+   size_accuracy_score           <- NoData
+   effort_accuracy_score         <- NoData
+   team_process_score            <- NoData
+   R2_task_effort                 <- NoData
+   R2_wbs_effort                 <- NoData
+   R2_phase_effort               <- NoData
+   slope_effort_by_phase         <- NoData
+   slope_effort_by_effort        <- NoData
+   slope_task_effort             <- NoData
+
+if(SCORE){
+# do not process a null project
+   if(!is.nan(actual_ACratio)  || !is.nan(plan_ADevratio) ){
+      ACRatio_score                 <- min(2*actual_ACratio,1.25)
+      PCRatio_score                 <- min(2*plan_ADevratio,1.25)
+      phase_effort_estimation_score <- R2_phase_effort
+      wbs_estimation_score          <- R2_wbs_effort
+      appraisal_effective_score     <- max(1.25,appraisal_defect_removal_rate /2.5)
+      if(is.nan(AM_Size_Estimation_Accuracy)){size_accuracy_score=0 
         } else {
-          size_accuracy_score = AM_Size_Estimation_Accuracy }
+            if(AM_Size_Estimation_Accuracy>1){
+              size_accuracy_score = 1/AM_Size_Estimation_Accuracy
+            } else {
+              size_accuracy_score = AM_Size_Estimation_Accuracy }
+        }
+      if(is.nan(Effort_Estimation_Accuracy)){effort_accuracy_score=0 
+      } else {
+        if(Effort_Estimation_Accuracy>1){
+           effort_accuracy_score = 1/Effort_Estimation_Accuracy
+         } else {
+         effort_accuracy_score  = Effort_Estimation_Accuracy   }
+        }
+     team_process_score <- mean( c(ACRatio_score,PCRatio_score, phase_effort_estimation_score, 
+                                   wbs_estimation_score ,       appraisal_effective_score, 
+                                   size_accuracy_score,         effort_accuracy_score) )    
     }
-   if(is.nan(Effort_Estimation_Accuracy)){effort_accuracy_score=0 
-   } else {
-     if(Effort_Estimation_Accuracy>1){
-       effort_accuracy_score = 1/Effort_Estimation_Accuracy
-     } else {
-       effort_accuracy_score  = Effort_Estimation_Accuracy   }
-     }
-   team_process_score            <- mean( c(ACRatio_score,PCRatio_score, phase_effort_estimation_score, wbs_estimation_score , appraisal_effective_score, size_accuracy_score, effort_accuracy_score) )
-     
-     
-    # execute preprocessing for output  
-    if (paste(phase_vector, collapse=":") == "") {
-      main_phases  <- NoData
-      phase_top    <- NoData
-      phase_bottom <- NoData
-      phase_top_and_bottom <- NoData
-    } else {
-        main_phases          <- paste(phase_vector, collapse=":")
-        phase_top            <- phase_vector[1]
-        phase_bottom         <- phase_vector[length(phase_vector)]
-        phase_top_and_bottom <- paste(phase_top, phase_bottom, sep=":")
-    }
+ 
+## Calculate correlation and parameters of regression line
+if (  length(task_is_complete_info$phase_short_name[!is.na(task_is_complete_info$phase_short_name)]) < 2 || 
+        length(task_is_complete_info$task_plan_time_minutes)  < 2   || 
+        length(task_is_complete_info$task_actual_time_minutes) <2 ) {
+  R2_phase_effort       <- NoData
+  slope_effort_by_phase <- NoData
+} else {
+  # aggregated phase effort correlation by each unit
+  dataset_effort_by_phase <- aggregate(list(sum_plan_time=task_is_complete_info$task_plan_time_minutes, sum_actual_time=task_is_complete_info$task_actual_time_minutes), by=list(phase_short_name=task_is_complete_info$phase_short_name), FUN=sum, na.rm=TRUE)
+  R2_phase_effort <- cor(dataset_effort_by_phase$sum_plan_time[!is.na(dataset_effort_by_phase$sum_plan_time)], dataset_effort_by_phase$sum_actual_time[!is.na(dataset_effort_by_phase$sum_actual_time)])
   
+  # regression line for aggregated phase effort
+  if (  length(unique(dataset_effort_by_phase$sum_plan_time))   > 1 && 
+          length(unique(dataset_effort_by_phase$sum_actual_time)) > 1) {
+    regression_effort_by_phase <- lm(sum_actual_time~sum_plan_time, data=dataset_effort_by_phase)
+    slope_effort_by_phase <- summary(regression_effort_by_phase)$coefficients["sum_plan_time","Estimate"]
+  } else {
+    slope_effort_by_phase <- NoData
+  }
+}
+
+# 
+# task effort correlation by each unit
+# consider decomposing these into functions
+#
+R2_task_effort      <- NoData
+slope_task_effort   <- NoData
+regress_task_effort <- NoData
+R2_wbs_effort       <- NoData
+slope_wbs_effort    <- NoData
+regress_wbs_effort  <- NoData
+dataset_effort_by_wbs<- NaN
+
+if (length(task_is_complete_info$task_plan_time_minutes) < 2 || length(task_is_complete_info$task_actual_time_minutes) == 0) {
+  R2_task_effort    <- NoData
+  slope_task_effort <- NoData
+} else {
+  #      R2_task_effort     <- cor(task_is_complete_info$task_plan_time_minutes, task_is_complete_info$task_actual_time_minutes)
+  R2_task_effort      <- cor(task_is_complete_info$task_plan_time_minutes, task_is_complete_info$task_actual_time_minutes)
+  regress_task_effort <- lm(task_plan_time_minutes~task_actual_time_minutes,data=task_is_complete_info)
+  slope_task_effort   <- summary(regress_task_effort)$coefficients["task_actual_time_minutes", "Estimate"]
+  # aggregated wbs element effort correlation by project
+  
+  # only gets to here if at least 2 data points 
+  
+  dataset_effort_by_wbs <- aggregate(  list(  sum_plan_time=task_is_complete_info$task_plan_time_minutes, 
+                                              sum_actual_time=task_is_complete_info$task_actual_time_minutes), 
+                                       by=list(wbs_element_key=task_is_complete_info$wbs_element_key), 
+                                       FUN=sum, 
+                                       na.rm=TRUE)
+  if ( length(dataset_effort_by_wbs$sum_actual_time) < 2) {
+    R2_wbs_effort    <- NaN
+    slope_wbs_effort <- NaN
+  } else {
+    R2_wbs_effort         <- cor(dataset_effort_by_wbs$sum_plan_time, dataset_effort_by_wbs$sum_actual_time)
+    regress_wbs_effort    <- lm(sum_plan_time~sum_actual_time,data=dataset_effort_by_wbs)
+    slope_wbs_effort      <- summary(regress_wbs_effort)$coefficients["sum_actual_time", "Estimate"]
+  }
+}
+} # SCORE
+# execute preprocessing for output  
+if (paste(phase_vector, collapse=":") == "") {
+  main_phases  <- NoData
+  phase_top    <- NoData
+  phase_bottom <- NoData
+  phase_top_and_bottom <- NoData
+} else {
+  main_phases          <- paste(phase_vector, collapse=":")
+  phase_top            <- phase_vector[1]
+  phase_bottom         <- phase_vector[length(phase_vector)]
+  phase_top_and_bottom <- paste(phase_top, phase_bottom, sep=":")
+}
+
+
+#>>>
+
     ## Output CSV data which is selected
-    # Output CSV data for fact sheet
+    # Output CSV data for fact ssheet
     increment_fact <- 1
-    
     for (fact_data_att in fact_data_att_list$attribute) {
       if (increment_fact < length(fact_data_att_list$attribute)) {
         writeLines(paste(get(fact_data_att)), out_fact, sep=",")  
@@ -2449,10 +2636,10 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
       }
       increment_fact <- increment_fact + 1
     }
-    
+#<<<
+########################################################
     # Output CSV data for fideity sheet
     increment_fidelity <- 1
-    
     for (fidelity_data_att in fidelity_data_att_list$attribute) {
       if (increment_fidelity < length(fidelity_data_att_list$attribute)) {
         writeLines(paste(get(fidelity_data_att)), out_fidelity, sep=",")  
@@ -2461,7 +2648,10 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
       }
       increment_fidelity <- increment_fidelity + 1
     }
-  }
+#############################################################
+  } # end of element loop
+#<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
   #close file
   close(out_fact)
   close(out_fidelity)

@@ -115,7 +115,7 @@ if (file.access("select_projects.txt") != 0) {
 str_unit <- paste(unit,collapse=",")  # list of projects
 
 
-
+if(FALSE){
 ## Execute Data Quality
 ## Generate data quality report
 source("extractDataQuality.R")
@@ -127,11 +127,13 @@ extractDataQuality(con, currentDirectory)
 #    projects listed in "str_unit" 
 #    output  filename and path
 #
+#source("defect_log_fact_sheet.R")
+
 source("time_log_fact_sheet.R")
-source("defect_log_fact_sheet.R")
+source("defect_fact_table.R")
 source("size_log_fact_sheet.R")
 source("task_fact_sheet.R")
-
+}
 # extract Project and Fidelity FactSheets
 source("extractProjectFact.R")
 extractProjectFact(con, currentDirectory)

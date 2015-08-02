@@ -40,12 +40,26 @@ source("tab_task_info.R")
 source("tab_time_def_info.R")
 source("tab_time_overlap_info.R")
 
+#source("tab_defect_task_plan_items.R")
+source("tab_each_defect_per_task_check_info.R")
+source("tab_defects_per_task_check_info.R")
+
+# plan items with defects but no logged task time
+plan_items_with_defects <- length(tab_defects_per_task_check_info$defect_plan_item_key)
+plan_items_with_defects_no_effort<-length(subset(tab_defects_per_task_check_info$task_plan_item_key,is.na(tab_defects_per_task_check_info$task_plan_item_key)))
+# count defects without a plan item logging time
+num_defects <- length(tab_each_defect_per_task_check_info$defect_plan_item_key)
+num_defects_without_plan_item_effort <- length(subset(tab_each_defect_per_task_check_info$task_plan_item_key,is.na(tab_each_defect_per_task_check_info$task_plan_item_key)))
+
+#need to do this per project?
+#if( plan_items_with_defects != num_defects_without_plan_item_effort){source("defects_per_task_check.R")}
+#if(num_defects != num_defects_without_plan_item_effort){source(each_defect_per_task_check.R)}
   # Read data selection from text file
   fact_selection            <- read.table("select_project-fact_data.txt", header=T, comment.char="#", sep=",")
   fidelity_selection        <- read.table("select_project-fidelity_data.txt", header=T, comment.char="#", sep=",")
   quality_selection         <- read.table("select_project-quality_data.txt", header=T, comment.char="#", sep=",")
   selection_flgs            <- list(fact_selection, fidelity_selection)
-  names(selection_flgs) <- c("fact_selection", "fidelity_selection")
+  names(selection_flgs)     <- c("fact_selection", "fidelity_selection")
   
   # Get data frame for project fact and project process fidelity
   DF_list        <- list(tab_project_info,     tab_organization_info,  tab_teams_info, 

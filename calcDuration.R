@@ -6,9 +6,8 @@
 
 library(chron)
 
-networkdays <- function(start, end, holidays) 
+calcDuration<- function(start, end) 
 {
-#dates <- seq(start, end, by="day")
 dates <- seq(as.Date(start), as.Date(end), by="day") 
 weekends <- 0
 
@@ -19,18 +18,10 @@ for(i in seq_along(dates)) {
 	
 	weekday <- day.of.week(month=month_val, day=day_val, year=year_val)
 	
-	if((weekday == 0) || (weekday == 6)) {
-		weekends <- weekends + 1
-	}
 }
 
-if(missing(holidays)) {
-	holidays <- 0 
-} else {
-	holidays <- length(holidays)
-}
 
 #sum(as.numeric(format(dates, "%w") > 1)) - weekends - holidays 
-length(dates) - weekends - holidays
+length(dates)
 } 
 

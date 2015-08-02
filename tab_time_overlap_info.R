@@ -19,7 +19,7 @@ tab_time_overlap_info<-dbGetQuery(con, paste("
  LEFT JOIN data_block AS d1 ON time_log_fact_hist.data_block_key = d1.data_block_key 
  LEFT JOIN plan_item        ON time_log_fact_hist.plan_item_key  = plan_item.plan_item_key 
  WHERE     project_key in (", str_unit, ")
-   AND    time_log_fact_hist.row_current_flag = 0
+   AND    time_log_fact_hist.row_current_flag = 1
  ORDER BY project_key,person_key,
            time_log_start_date
 ", seq=""))

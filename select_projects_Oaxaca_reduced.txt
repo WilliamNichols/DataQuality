@@ -1,0 +1,20 @@
+# This text file is for selection of projects to include in the analysis 
+#
+# Oaxaca
+#
+# these two appear to have no data
+#Oaxca
+#122  224  160 141
+#370  144  134 135
+#231  263  374 268
+#392  222  228 335
+#246  324  343 247
+#393
+
+#Nedbank MFS_Webspace
+#279
+project_key
+279
+
+
+
