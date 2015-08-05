@@ -1,6 +1,30 @@
 # This text file is for selection of projects to include in the analysis 
-# all projects
+#
+# KERNEL
+#
+# these two appear to be problematic
 #
 project_key
+122
+224
+160
+141
+370
+144
+134
+135
+231
+266
+374
+394
+392
+222
+228
+335
+246
+324
+343
+247
+393
 
 

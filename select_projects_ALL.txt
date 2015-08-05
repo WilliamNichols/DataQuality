@@ -1,0 +1,6 @@
+# This text file is for selection of projects to include in the analysis 
+# all projects
+#
+project_key
+
+

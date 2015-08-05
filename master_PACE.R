@@ -20,13 +20,14 @@ library(lattice)
 #library(xlsx)
 #
 #
-
 #
 # set up default directory and file names
 #
 #####################################################################################################
 ## Set the directory including this file as the default work directory
 #
+BUILD_BASIC_FACTSHEETS <- FALSE # unless overridden in the confit.txt file
+
 fileExists <- file.access("set_myWorkingDirectory.txt") # returns 0 if file exists
 if ( fileExists == 0 ) {
     # if file exists, read the value in the file
@@ -115,26 +116,32 @@ if (file.access("select_projects.txt") != 0) {
 str_unit <- paste(unit,collapse=",")  # list of projects
 
 
-if(FALSE){
-## Execute Data Quality
-## Generate data quality report
-source("extractDataQuality.R")
-extractDataQuality(con, currentDirectory)
+source("fact_sheet_flags.R")
+if(BUILD_QUALITY_FACTSHEETS){
+  ## Execute Data Quality
+   ## Generate data quality report
+  source("extractDataQuality.R")
+  extractDataQuality(con, currentDirectory)
+}
 
+if(BUILD_BASIC_FACTSHEETS){
+  ## Basic fact sheets are extracted from SEMPR by using MysQL selection  without additional processing
+  ## Extract Basic fact sheets using variables defined above for
+  #    projects listed in "str_unit" 
+  #    output  filename and path
+  #
+  #source("defect_log_fact_sheet.R")
 
-## Basic fact sheets are extracted from SEMPR by using MysQL selection  without additional processing
-## Extract Basic fact sheets using variables defined above for
-#    projects listed in "str_unit" 
-#    output  filename and path
-#
-#source("defect_log_fact_sheet.R")
-
-source("time_log_fact_sheet.R")
-source("defect_fact_table.R")
-source("size_log_fact_sheet.R")
-source("task_fact_sheet.R")
+  source("time_log_fact_sheet.R")
+  source("defect_fact_table.R")
+  source("size_log_fact_sheet.R")
+  source("task_fact_sheet.R")
 }
 # extract Project and Fidelity FactSheets
-source("extractProjectFact.R")
-extractProjectFact(con, currentDirectory)
+if (BUILD_PROJECT_FACTS){
+  source("extractProjectFact.R")
+  extractProjectFact(con, currentDirectory)
+}
+# extract Project and Fidelity FactSheets
+
 

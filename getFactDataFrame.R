@@ -46,8 +46,9 @@ source("calcweeks.R") #need to specify absolute path
 NoData <- "No Data"
 
 getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, unit_name) {
-  SCORE = FALSE
-  
+ 
+  element=134
+  unit_name="project"
   # Exchange second argument into each data frame which is used in this function
   tab_project_info         <- DF_list$tab_project_info
   tab_organization_info    <- DF_list$tab_organization_info
@@ -71,66 +72,80 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     tab_wbs_info <- DF_list$tab_wbs_info
   }
   
-  ## Output CSV header which is selected
-  # fact sheet CSV header
-  fact_data_att_list     <- subset(selection_flgs$fact_selection, selection_flg==1)
-  increment_fact         <- 1
-  # fidelity sheet CSV header
-  fidelity_data_att_list <- subset(selection_flgs$fidelity_selection, selection_flg==1)
-  increment_fidelity     <- 1
-  
+  ###################################
+  ## Output selectedd CSV headers
   if (unit_name == "project") {
-    file_path_fact <- paste(currentDirectory, "/project_fact_sheet_", Sys.Date(), ".csv", sep="")
-    file_path_fidelity <- paste(currentDirectory, "/project_process_fidelity_sheet_", Sys.Date(), ".csv", sep="")
-    unit_key <- "project_key"
+    file_path_fact          <- paste( currentDirectory, "/project_fact_sheet_",             Sys.Date(), ".csv", sep="")
+    file_path_fidelity      <- paste( currentDirectory, "/project_process_fidelity_sheet_", Sys.Date(), ".csv", sep="")
+    file_path_qualitySheet  <- paste( currentDirectory, "/project_product_quality_sheet_",  Sys.Date(), ".csv", sep="")   
+    unit_key           <- "project_key"
   } else if (unit_name == "component") {
-    file_path_fact <- paste(currentDirectory, "/component_fact_sheet_", Sys.Date(), ".csv", sep="")
+    file_path_fact     <- paste(currentDirectory, "/component_fact_sheet_", Sys.Date(), ".csv", sep="")
     file_path_fidelity <- paste(currentDirectory, "/component_process_fidelity_sheet_", Sys.Date(), ".csv", sep="")
     unit_key <- "wbs_element_key"
   }
   
   #write the header row for the project_fact_sheet
   #
+  # fidelity sheet CSV header
+  # fact sheet CSV header
+  fact_data_att_list <- subset(selection_flgs$fact_selection, selection_flg==1)
+  increment_fact     <- 1
   out_fact <- file(file_path_fact, "w")     
-
   for (fact_data_att in fact_data_att_list$attribute) {
     if (increment_fact < length(fact_data_att_list$attribute)) {
       writeLines(paste(fact_data_att), out_fact, sep=",")  
     } else {
       writeLines(paste(fact_data_att), out_fact, sep="\n")
     }
-    
     increment_fact <- increment_fact + 1
   }
   
   #############################################################
   #write the header row for the process_fidelity_fact_sheet
   #
-  out_fidelity <- file(file_path_fidelity, "w")
-  
+  # fidelity sheet CSV header
+  fidelity_data_att_list <- subset(selection_flgs$fidelity_selection, selection_flg==1)
+  increment_fidelity     <- 1 
+  out_fidelity   <- file(file_path_fidelity, "w")
   for (fidelity_data_att in fidelity_data_att_list$attribute) {
     if (increment_fidelity < length(fidelity_data_att_list$attribute)) {
       writeLines(paste(fidelity_data_att), out_fidelity, sep=",")  
     } else {
       writeLines(paste(fidelity_data_att), out_fidelity, sep="\n")
     }
-    
     increment_fidelity <- increment_fidelity + 1
+  }
+  
+  #############################################################
+  #write the header row for the process_qulaity_sheet
+  #
+  qualitySheet_data_att_list <- subset(selection_flgs$qualitySheeet_selection, selection_flg==1)
+  increment_qualitySheet     <- 1  
+  out_qualitySheet <- file(file_path_qualitySheet, "w")  
+  for (qualitySheet_data_att in qualitySheet_data_att_list$attribute) {
+    if (increment_qualitySheet < length(qualitySheet_data_att_list$attribute)) {
+      writeLines(paste(qualitySheet_data_att), out_qualitySheet, sep=",")  
+    } else {
+      writeLines(paste(qualitySheet_data_att), out_qualitySheet, sep="\n")
+    }
+    increment_qualitySheet <- increment_qualitySheet + 1
   }
   #############################################################
  
-  projects_with_time<-sort(unique(tab_time_log_info$project_key))
+  projects_with_time<- unique(tab_time_log_info$project_key)
 #  had looped over unit, but will remove all no-data projects from the fact table
   # begin main loop over the elements (projects of components)
   #> begin element loop >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
   ## Extract data by each unit (project or component)
-  for (element in projects_with_time) {
+# for (element in projects_with_time) {
+  for (element in unit) {                              # need to revise this to use unit order
     ## Prepare vector for internal variable
     phase_vector <- list()
     #initialize element values each time through loop
-    duration_variance_schedule_days <- NULL
-    duration_variance_network_days  <- NULL
-    duration_variance_days_worked   <- NULL
+    duration_variance_schedule_days       <- NULL
+    duration_variance_network_days       <- NULL
+    duration_variance_days_worked         <- NULL
     duration_variance_schedule_percent    <- NULL
     duration_variance_network_percent     <- NULL
     duration_variance_days_worked_percent <- NULL
@@ -491,10 +506,8 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     }
     
     ## Extract plan size and actual size infomation from size fact hist table 
-    #plan_size_info <- subset(tab_size_info,   project_key==element  & measurement_type_key=="1" & size_metric_name=="Lines of Code")
-    #actual_size_info <- subset(tab_size_info, project_key==element  & measurement_type_key=="4" & size_metric_name=="Lines of Code")
     plan_size_info   <- subset(tab_size_info, get(unit_key)==element & measurement_type_key=="1" & size_metric_name=="Lines of Code")
-    actual_size_info <- subset(tab_size_info, get(unit_key)==element & measurement_type_key=="4" & size_metric_name=="Lines of Code")
+    actual_size_info  <- subset(tab_size_info, get(unit_key)==element & measurement_type_key=="4" & size_metric_name=="Lines of Code")
     
     if (length(plan_size_info$sum_size_base) == 0 || is.na(plan_size_info$sum_size_base)) {
       planB <- 0
@@ -586,8 +599,6 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
   
     ## Extract defect injected and defect removed information from defect log fact hist table  
     # Extract defect injected and defect removed information by each project
-    #defect_inj_info <- subset(tab_defect_injected_info, project_key==element)
-    #defect_rem_info <- subset(tab_defect_removed_info,  project_key==element)
     defect_inj_info  <- subset(tab_defect_injected_info, get(unit_key)==element)
     defect_rem_info  <- subset(tab_defect_removed_info,  get(unit_key)==element)
     
@@ -1667,7 +1678,8 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     }
     
     ATTOTAL <- sum(time_info$sum_actual_time, na.rm=TRUE)
-    
+    post_CC_effort      <-  ATDEPLOY + ATPL + ATAT + ATST + ATBIT + ATPM
+    post_CC_test_effort <-  ATPL + ATAT + ATST + ATBIT
 
 #WRN ToDo, this relies only on code
     ## Actual Defect Density
@@ -2398,6 +2410,12 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     dataset_failure      <- subset(task_info, phase_type=="Failure")
     dataset_overhead     <- subset(task_info, phase_type=="Overhead")
     dataset_construction <- subset(task_info, phase_type=="Construction")  
+
+    overhead_effort     <- sum(dataset_overhead$task_actual_time_minutes)
+    construction_effort <- sum(dataset_construction$task_actual_time_minutes)
+    appraisal_effort    <- sum(dataset_appraisal$task_actual_time_minutes)
+    failure_effort      <- sum(dataset_failure$task_actual_time_minutes)
+
 # Count appraisal tasks by each unit
 
     count_appraisal    <- length(dataset_appraisal$phase_type)
@@ -2424,7 +2442,7 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     count_failure_with_time     <- length(dataset_failure_with_time$task_actual_time_minutes)
  
     
-    # Count appraisal tasks with >0 defects found
+    # Count appraisal tasks with >0 defects found  WRN TODO, review all of these, everyitng using dataset_appraisal is broken WRT defects
     dataset_appraisal_with_defects <- subset(dataset_appraisal, defects_found>0)
     count_appraisal_with_defects   <- length(dataset_appraisal_with_defects$defects_found)
     dataset_failure_with_defects   <- subset(dataset_failure, defects_found>0)
@@ -2432,10 +2450,13 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     #
     # WRN additions to count appraisal and failure find Rates
     plan_appraisal_time_tasks_started <- sum(dataset_appraisal_with_time$task_plan_time_minutes)   ## wrn
-    actual_appraisal_time             <- sum(dataset_appraisal_with_time$task_actual_time_minutes) ## wrn
-    appraisal_defects                 <- sum(dataset_appraisal_with_defects$defects_found)            ## wrn
-    failure_defects                   <- sum(dataset_failure_with_defects$defects_found)            ## wrn
-    total_defects                     <- sum(task_is_complete_info$defects_found, na.rm = TRUE)
+    actual_appraisal_time_with_time   <- sum(dataset_appraisal_with_time$task_actual_time_minutes) ## wrn
+    actual_appraisal_time             <- sum(dataset_appraisal$task_actual_time_minutes) ## wrn
+    def_dataset_appraisal             <- subset(defect_rem_info, phase_type=="Appraisal") 
+    appraisal_defects                 <- sum(def_dataset_appraisal$sum_defect_fix_count)            ## wrn
+    def_dataset_failure               <- subset(defect_rem_info, phase_type=="Failure") 
+    failure_defects                   <- sum(def_dataset_failure$sum_defect_fix_count)            ## wrn
+    total_defects                     <- sum(defect_rem_info$sum_defect_fix_count, na.rm=TRUE)
     if( actual_appraisal_time >0){
       appraisal_defect_removal_rate <- (appraisal_defects/actual_appraisal_time)*60.
     }else{
@@ -2452,9 +2473,9 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     dataset_failure_with_defects <- subset(dataset_failure, defects_found>0)
     count_failure_with_defects   <- length(dataset_failure_with_defects$defects_found)
     
-    # Count appraisal tasks with 0 time
-    dataset_appraisal_with_time  <- subset(dataset_appraisal, task_actual_time_minutes>0)   
-    dataset_failure_with_time    <- subset(dataset_failure,   task_actual_time_minutes>0)
+    # Count appraisal tasks with 0 time WRN TODO
+ #   dataset_appraisal_with_time  <- subset(dataset_appraisal, task_actual_time_minutes>0)   
+ #   dataset_failure_with_time    <- subset(dataset_failure,   task_actual_time_minutes>0)
     
     #failure find Rates
     count_failure_with_time         <- length(dataset_failure_with_time$task_actual_time_minutes)
@@ -2472,10 +2493,6 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
     count_failure_with_zero_defects   <- length(dataset_failure_with_zero_defects$defects_found)
     
  
-   total_appraisal_defects  <- sum(dataset_appraisal_with_defects$defects_found, na.rm = TRUE)
-   total_failure_defects    <- sum(dataset_failure_with_time$defects_found, na.rm = TRUE)
-   total_defects            <- sum(task_is_complete_info$defects_found, na.rm = TRUE)
-
    PCTDREM_appraisal    <- 0.0            
    PCTDREM_failure      <- 0.0
    ADREM_rate_appraisal <- 0.0
@@ -2522,7 +2539,8 @@ getFactDataFrame <- function(unit, DF_list, selection_flgs, currentDirectory, un
    slope_effort_by_effort        <- NoData
    slope_task_effort             <- NoData
 
-if(SCORE){
+PROCESS_SCORE = TRUE  # scores are not yet fully stable
+if(PROCESS_SCORE){
 # do not process a null project
    if(!is.nan(actual_ACratio)  || !is.nan(plan_ADevratio) ){
       ACRatio_score                 <- min(2*actual_ACratio,1.25)
@@ -2622,9 +2640,7 @@ if (paste(phase_vector, collapse=":") == "") {
   phase_top_and_bottom <- paste(phase_top, phase_bottom, sep=":")
 }
 
-
-#>>>
-
+#>>
     ## Output CSV data which is selected
     # Output CSV data for fact ssheet
     increment_fact <- 1
@@ -2648,6 +2664,18 @@ if (paste(phase_vector, collapse=":") == "") {
       }
       increment_fidelity <- increment_fidelity + 1
     }
+########################################################
+# Output CSV data for qualitySheet
+increment_qualitySheet  <- 1
+for (qualitySheet_data_att in qualitySheet_data_att_list$attribute) {
+  if (increment_qualitySheet < length(qualitySheet_data_att_list$attribute)) {
+    writeLines(paste(get(qualitySheet_data_att)), out_qualitySheet, sep=",")  
+  } else {
+    writeLines(paste(get(qualitySheet_data_att)), out_qualitySheet, sep="\n")
+  }
+  increment_qualitySheet <- increment_qualitySheet + 1
+}
+
 #############################################################
   } # end of element loop
 #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -2655,4 +2683,6 @@ if (paste(phase_vector, collapse=":") == "") {
   #close file
   close(out_fact)
   close(out_fidelity)
+  close(out_qualitySheet)
 }
+

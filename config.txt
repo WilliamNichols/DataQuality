@@ -1,3 +1,5 @@
+# set to FALSE if we want to skip the basic fact sheets
+
 m<-dbDriver("MySQL"); # set up the driver for reading the database
 
 

@@ -219,7 +219,8 @@ ORDER BY    project_key, wbs_element_key, plan_item_key, measurement_type_key
 # "task_actual_time_minutes"      "task_plan_time_minutes"        "task_actual_complete_date_key"
 # "defects_found"  
 #
-tab_task_info<-dbGetQuery(con, paste("
+#remove defects or fix, the join to plan_item is causing duplicatoin
+tab_task_info<-dbGetQuery(con, paste(" # getting the wrong number of defects, because of key on plan_item, defects map to plan item, not task? 
 SELECT DISTINCT project_key,
                 phase_base.phase_base_key,
                 wbs_element_key,
@@ -430,11 +431,12 @@ tab_phase_time_info<-dbGetQuery(con, paste("
                                             ", seq=""))
 
 # Read data selection from text file
-fact_selection <- read.table("select_project-fact_data.txt", header=T, comment.char="#"
-                           , sep=",")
-fidelity_selection    <- read.table("select_project-fidelity_data.txt", header=T, comment.char="#", sep=",")
-selection_flgs        <- list(fact_selection, fidelity_selection)
-names(selection_flgs) <- c("fact_selection", "fidelity_selection")
+fact_selection         <- read.table("select_project-fact_data.txt"     , header=T, comment.char="#"                           , sep=",")
+fidelity_selection     <- read.table("select_project-fidelity_data.txt" , header=T, comment.char="#", sep=",")
+qualitySheet_selection <- read.table("select_project-quality_data.txt"  , header=T, comment.char="#", sep=",")
+
+selection_flgs        <-list( fact_selection,   fidelity_selection,   qualitySheet_selection)
+names(selection_flgs) <-   c("fact_selection", "fidelity_selection", "qualitySheeet_selection")
 
 # Get data frame for project fact and project process fidelity
 DF_list <- list(
@@ -452,4 +454,9 @@ names(DF_list) <- c(
 
 source("getFactDataFrame.R")
 getFactDataFrame(unit, DF_list, selection_flgs, currentDirectory, "project")
+
+#if(FALSE){ # build this later
+# source("buildQuality.R")
+# builQualitySheet(unit, DF_list, selection_flgs, currentDirectory)
+#}
 }
